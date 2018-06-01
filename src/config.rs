@@ -1,5 +1,5 @@
 use clap::OsValues;
-use failure::{Error, Fail};
+use failure::Error;
 
 use std::ffi::OsString;
 use std::fmt;

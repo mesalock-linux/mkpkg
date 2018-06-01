@@ -37,6 +37,7 @@ mod network;
 #[macro_use]
 mod macros;
 mod package;
+mod progress;
 #[allow(dead_code)]
 mod util;
 

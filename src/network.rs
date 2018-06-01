@@ -1,20 +1,17 @@
-use failure::Fail;
 use git2::build::RepoBuilder;
-use git2::{self, FetchOptions, RemoteCallbacks, Progress};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use git2::{self, FetchOptions, RemoteCallbacks};
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rayon;
 use reqwest::{self, Client};
 use reqwest::header::ContentLength;
 use url::Url;
 
-use std::collections::VecDeque;
-use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
-use std::sync::{Arc, Mutex};
 
 use package::{BuildFile, PackageError};
+use progress::{AggregateError, ProgressError, Progress};
 use util::path_to_string;
 
 use super::Config;
@@ -29,9 +26,6 @@ pub enum NetworkError {
 
     #[fail(display = "could not create file '{}': {}", _0, _1)]
     TargetFile(String, #[cause] io::Error),
-
-    #[fail(display = "failed to clear progress bars: {}", _0)]
-    Progress(#[cause] io::Error),
 
     #[fail(display = "failed to download data from '{}': {}", _0, _1)]
     Download(Url, #[cause] io::Error),
@@ -50,22 +44,14 @@ pub enum NetworkError {
 
     #[fail(display = "failed to download '{}': {}", _0, _1)]
     Reqwest(String, #[cause] reqwest::Error),
+
+    #[fail(display = "{}", _0)]
+    Progress(#[cause] ProgressError),
 }
 
-#[derive(Debug)]
-pub struct AggregateError<T: Fail> {
-    errs: Vec<T>,
-}
-
-impl<T: Fail> Fail for AggregateError<T> { }
-
-impl<T: Fail> fmt::Display for AggregateError<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "found the following {} error(s) while downloading packages", self.errs.len())?;
-        for e in &self.errs {
-            writeln!(f, "\t{}", e)?;
-        }
-        Ok(())
+impl From<ProgressError> for NetworkError {
+    fn from(err: ProgressError) -> Self {
+        NetworkError::Progress(err)
     }
 }
 
@@ -88,69 +74,49 @@ impl Downloader {
         let thread_count = rayon::current_num_threads();
         let bar_count = thread_count.min(pkgs.len() + 1).max(2);
 
-        let (multibar, total_bar, bars) = self.create_multibar(bar_count);
+        let mut progress = Progress::new(bar_count);
 
-        total_bar.set_length(pkgs.len() as u64);
-        total_bar.tick();
-
-        let errors = rayon::scope(|s| {
-            let errors = Arc::new(Mutex::new(vec![]));
-            let errors_clone = errors.clone();
-            s.spawn(|_| {
-                let errors = errors_clone;
-                pkgs.par_iter().for_each(|pkg| {
-                    // this should be fine as we should have the same number of progress bars as
-                    // threads rayon uses for this iterator
-                    let progbar = { bars.lock().unwrap().pop_front().unwrap() };
-
-                    let builddir = pkg.builddir(config);
-                    if !builddir.exists() {
-                        if let Err(f) = fs::create_dir(&builddir) {
-                            let mut errors = errors.lock().unwrap();
-                            let nerr = NetworkError::CreateDir(path_to_string(&builddir), f);
-                            errors.push(nerr);
-                            total_bar.set_message(&errors.len().to_string());
-                            total_bar.tick();
-                        }
-                    }
-
-                    for (i, url) in pkg.source().iter().enumerate() {
-                        progbar.set_prefix(&format!("{}/{}", pkg.name(), i + 1));
-                        progbar.set_position(0);
-                        
-                        if let Err(f) = self.download(&progbar, pkg, config, url) {
-                            let mut errors = errors.lock().unwrap();
-                            errors.push(f);
-                            total_bar.set_message(&errors.len().to_string());
-                            total_bar.tick();
-                        }
-                    }
-
-                    total_bar.inc(1);
-                    total_bar.tick();
-
-                    progbar.set_style(ProgressStyle::default_bar().template("Waiting/Done"));
-                    progbar.tick();
-                    bars.lock().unwrap().push_back(progbar);
-                });
-                for bar in bars.lock().unwrap().iter() {
-                    bar.finish();
-                }
-                total_bar.finish_and_clear();
-            });
-            //multibar.join_and_clear()?;
-            if let Err(f) = multibar.join_and_clear() {
-                errors.lock().unwrap().push(NetworkError::Progress(f));
+        progress.on_init(|total_bar, bars| {
+            for bar in bars.lock().unwrap().iter() {
+                bar.set_style(self.bar_style());
             }
-            errors
+
+            total_bar.set_length(pkgs.len() as u64);
+            total_bar.tick();
         });
 
-        let errors = Arc::try_unwrap(errors).unwrap().into_inner().unwrap();
-        if errors.len() > 0 {
-            Err(AggregateError { errs: errors })
-        } else {
-            Ok(())
-        }
+        progress.on_iter(|pkg: &BuildFile, progbar, total_bar, errors| {
+            let builddir = pkg.builddir(config);
+            if !builddir.exists() {
+                if let Err(f) = fs::create_dir(&builddir) {
+                    let mut errors = errors.lock().unwrap();
+                    let nerr = NetworkError::CreateDir(path_to_string(&builddir), f);
+                    errors.push(nerr);
+                    total_bar.set_message(&errors.len().to_string());
+                    total_bar.tick();
+                }
+            }
+
+            for (i, url) in pkg.source().iter().enumerate() {
+                progbar.set_prefix(&format!("{}/{}", pkg.name(), i + 1));
+                progbar.set_position(0);
+                
+                if let Err(f) = self.download(&progbar, pkg, config, url) {
+                    let mut errors = errors.lock().unwrap();
+                    errors.push(f);
+                    total_bar.set_message(&errors.len().to_string());
+                    total_bar.tick();
+                }
+            }
+
+            total_bar.inc(1);
+            total_bar.tick();
+
+            progbar.set_style(ProgressStyle::default_bar().template("Waiting/Done"));
+            progbar.tick();
+        });
+
+        progress.run(pkgs.par_iter())
     }
 
     // XXX: design should maybe check if the user specified git/https/http like git: url
@@ -180,7 +146,7 @@ impl Downloader {
     fn download_git(&self, progbar: &ProgressBar, pkg: &BuildFile, config: &Config, url: &Url, filename: &str) -> Result<(), NetworkError> {
         progbar.set_style(self.git_style());
         progbar.tick();
-        let progress_cb = |progress: Progress| {
+        let progress_cb = |progress: git2::Progress| {
             // XXX: it may be faster to just check every half a second or so (to avoid the constant
             //      locking and unlocking)
             progbar.set_length(progress.total_objects() as u64);
@@ -246,38 +212,6 @@ impl Downloader {
         }
 
         Ok(())
-    }
-
-    // spawn bar_count progress bars (with one being the total progress bar)
-    fn create_multibar(&self, bar_count: usize) -> (MultiProgress, ProgressBar, Arc<Mutex<VecDeque<ProgressBar>>>) {
-        let multibar = MultiProgress::new();
-
-        let total_bar = multibar.add(self.create_total_progbar());
-        total_bar.set_message("0");
-
-        let mut bars = VecDeque::with_capacity(bar_count - 1);
-        for _ in 0..bar_count - 1 {
-            bars.push_back(multibar.add(self.create_progbar()));
-        }
-        let bars = Arc::new(Mutex::new(bars));
-
-        (multibar, total_bar, bars)
-    }
-
-    fn create_progbar(&self) -> ProgressBar {
-        let progbar = ProgressBar::new(0);
-        progbar.set_style(self.bar_style());
-        progbar
-    }
-
-    fn create_total_progbar(&self) -> ProgressBar {
-        let progbar = ProgressBar::new(0);
-        progbar.set_style(self.total_style());
-        progbar
-    }
-
-    fn total_style(&self) -> ProgressStyle {
-        ProgressStyle::default_bar().template("{wide_bar} {pos}/{len} packages ({msg} errors)")
     }
 
     fn bar_style(&self) -> ProgressStyle {

@@ -4,7 +4,7 @@ use serde_yaml;
 use semver::Version;
 use url::Url;
 use url_serde;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
