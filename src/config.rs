@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use archive::Archiver;
+//use builder::Builder;
 use network::Downloader;
 use package::BuildFile;
 
@@ -59,6 +60,7 @@ impl<'a> Action<'a> {
                     println!("{:?}", buildfile);
 
                     Archiver::new().extract(config, &buildfile)?;
+                    //Builder::new().build_pkgs(config, &buildfiles)?;
                 }
             }
             Describe { pkgs } => {

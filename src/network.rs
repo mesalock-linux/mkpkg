@@ -2,7 +2,6 @@ use git2::build::RepoBuilder;
 use git2::{self, FetchOptions, RemoteCallbacks};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
-use rayon;
 use reqwest::{self, Client};
 use reqwest::header::ContentLength;
 use url::Url;
@@ -18,9 +17,6 @@ use super::Config;
 
 #[derive(Debug, Fail)]
 pub enum NetworkError {
-    #[fail(display = "could not create directory '{}': {}", _0, _1)]
-    CreateDir(String, #[cause] io::Error),
-
     #[fail(display = "could not remove directory '{}': {}", _0, _1)]
     RemoveDir(String, #[cause] io::Error),
 
@@ -67,13 +63,7 @@ impl Downloader {
     }
 
     pub fn download_pkgs(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), AggregateError<NetworkError>> {
-        if let Err(f) = fs::create_dir_all(config.builddir) {
-            return Err(AggregateError { errs: vec![NetworkError::CreateDir(path_to_string(config.builddir), f)] });
-        }
-
-        let thread_count = rayon::current_num_threads();
-        let bar_count = thread_count.min(pkgs.len() + 1).max(2);
-
+        let bar_count = pkgs.len() + 1;
         let mut progress = Progress::new(bar_count);
 
         progress.on_init(|total_bar, bars| {
@@ -86,17 +76,6 @@ impl Downloader {
         });
 
         progress.on_iter(|pkg: &BuildFile, progbar, total_bar, errors| {
-            let builddir = pkg.builddir(config);
-            if !builddir.exists() {
-                if let Err(f) = fs::create_dir(&builddir) {
-                    let mut errors = errors.lock().unwrap();
-                    let nerr = NetworkError::CreateDir(path_to_string(&builddir), f);
-                    errors.push(nerr);
-                    total_bar.set_message(&errors.len().to_string());
-                    total_bar.tick();
-                }
-            }
-
             for (i, url) in pkg.source().iter().enumerate() {
                 progbar.set_prefix(&format!("{}/{}", pkg.name(), i + 1));
                 progbar.set_position(0);
@@ -108,15 +87,9 @@ impl Downloader {
                     total_bar.tick();
                 }
             }
-
-            total_bar.inc(1);
-            total_bar.tick();
-
-            progbar.set_style(ProgressStyle::default_bar().template("Waiting/Done"));
-            progbar.tick();
         });
 
-        progress.run(pkgs.par_iter())
+        progress.run(config, pkgs.par_iter())
     }
 
     // XXX: design should maybe check if the user specified git/https/http like git: url

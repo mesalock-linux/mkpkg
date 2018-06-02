@@ -1,9 +1,9 @@
 use tar;
-use libflate::gzip::Decoder;
+use flate2::bufread::GzDecoder;
 use bzip2::bufread::BzDecoder;
 use tempfile;
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -20,14 +20,14 @@ pub enum ArchiveError {
     #[fail(display = "could not open '{}': {}", _0, _1)]
     OpenFile(String, #[cause] io::Error),
 
-    #[fail(display = "could not create decoder: {}", _0)]
-    Decoder(#[cause] io::Error),
-
     #[fail(display = "could not decompress file: {}", _0)]
     Decompress(#[cause] io::Error),
 
     #[fail(display = "could not extract contents of '{}': {}", _0, _1)]
     Extract(String, #[cause] io::Error),
+
+    #[fail(display = "could not remove previously extracted files at '{}': {}", _0, _1)]
+    RemoveDir(String, #[cause] io::Error),
 
     #[fail(display = "{}", _0)]
     Package(#[cause] PackageError),
@@ -41,18 +41,18 @@ pub struct Archiver {
 // XXX: if we try to build in a container, maybe extract to separately writable dirs or something?
 
 trait CompDecoder<R: BufRead>: Sized + Read {
-    fn create(reader: R) -> Result<Self, ArchiveError>;
+    fn create(reader: R) -> Self;
 }
 
-impl<R: BufRead> CompDecoder<R> for Decoder<R> {
-    fn create(reader: R) -> Result<Self, ArchiveError> {
-        Self::new(reader).map_err(|e| ArchiveError::Decoder(e))
+impl<R: BufRead> CompDecoder<R> for GzDecoder<R> {
+    fn create(reader: R) -> Self {
+        Self::new(reader)
     }
 }
 
 impl<R: BufRead> CompDecoder<R> for BzDecoder<R> {
-    fn create(reader: R) -> Result<Self, ArchiveError> {
-        Ok(Self::new(reader))
+    fn create(reader: R) -> Self {
+        Self::new(reader)
     }
 }
 
@@ -90,7 +90,7 @@ impl Archiver {
                 let decompressed = if is_gz {
                     // decompress using gzip (libflate)
                     // FIXME: libflate is very slow compared to the system gzip
-                    Some(self.decompress::<Decoder<_>>(&build_path)?)
+                    Some(self.decompress::<GzDecoder<_>>(&build_path)?)
                 } else if is_bzip2 {
                     // decompress using bzip2
                     Some(self.decompress::<BzDecoder<_>>(&build_path)?)
@@ -108,6 +108,7 @@ impl Archiver {
                     
                     let mut archive = tar::Archive::new(reader);
                     // FIXME: extract to correct path
+                    fs::remove_dir_all("test").map_err(|e| ArchiveError::RemoveDir(path_to_string(&build_path), e))?;
                     archive.unpack("test").map_err(|e| ArchiveError::Extract(path_to_string(&build_path), e))?;
                 }
             }
@@ -124,7 +125,7 @@ impl Archiver {
             let input = File::open(build_path).map_err(|e| ArchiveError::OpenFile(path_to_string(build_path), e))?;
             let reader = BufReader::new(input);
 
-            let mut decoder = T::create(reader)?;
+            let mut decoder = T::create(reader);
 
             io::copy(&mut decoder, &mut writer).map_err(|e| ArchiveError::Decompress(e))?;
         }

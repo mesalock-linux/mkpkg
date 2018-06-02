@@ -5,9 +5,14 @@ use rayon;
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::fs;
 use std::io;
 use std::mem;
 use std::sync::{self, Arc, Mutex};
+
+use config::Config;
+use package::BuildFile;
+use util::path_to_string;
 
 #[derive(Debug, Fail)]
 pub enum ProgressError {
@@ -16,6 +21,9 @@ pub enum ProgressError {
 
     #[fail(display = "failed to clear progress bars: {}", _0)]
     Multibar(#[cause] io::Error),
+
+    #[fail(display = "could not create directory '{}': {}", _0, _1)]
+    CreateDir(String, #[cause] io::Error),
 }
 
 #[derive(Debug)]
@@ -35,39 +43,30 @@ impl<T: Fail> fmt::Display for AggregateError<T> {
     }
 }
 
-pub struct Progress<In, It, T, E>
+pub struct Progress<In, It, E>
 where
     In: Fn(&ProgressBar, &Mutex<VecDeque<ProgressBar>>),
-    It: Fn(T, &ProgressBar, &ProgressBar, &Mutex<Vec<E>>),
-    T: Send,
+    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Mutex<Vec<E>>),
     E: From<ProgressError> + Fail,
 {
-    multibar: MultiProgress,
-    total_bar: ProgressBar,
-    bars: Arc<Mutex<VecDeque<ProgressBar>>>,
+    bar_count: usize,
     init_fn: Option<In>,
     iter_fn: Option<It>,
-    _x: ::std::marker::PhantomData<T>,
-    _y: ::std::marker::PhantomData<E>,
+    _phantom: ::std::marker::PhantomData<E>,
 }
 
-impl<In, It, T, E> Progress<In, It, T, E>
+impl<In, It, E> Progress<In, It, E>
 where
     In: Fn(&ProgressBar, &Mutex<VecDeque<ProgressBar>>) + Send + Sync,
-    It: Fn(T, &ProgressBar, &ProgressBar, &Mutex<Vec<E>>) + Send + Sync,
-    T: Send + Sync,
+    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Mutex<Vec<E>>) + Send + Sync,
     E: From<ProgressError> + Fail,
 {
     pub fn new(bar_count: usize) -> Self {
-        let (multibar, total_bar, bars) = Self::create_multibar(bar_count);
         Self {
-            multibar: multibar,
-            total_bar: total_bar,
-            bars: bars,
+            bar_count: bar_count.min(rayon::current_num_threads()),
             init_fn: None,
             iter_fn: None,
-            _x: ::std::marker::PhantomData,
-            _y: ::std::marker::PhantomData,
+            _phantom: ::std::marker::PhantomData,
         }
     }
 
@@ -81,15 +80,21 @@ where
         self.iter_fn = Some(cb);
     }
 
-    pub fn run<I: ParallelIterator<Item = T>>(mut self, iter: I) -> Result<(), AggregateError<E>> {
+    pub fn run<'a, I: ParallelIterator<Item = &'a BuildFile>>(mut self, config: &Config, iter: I) -> Result<(), AggregateError<E>> {
+        if let Err(f) = fs::create_dir_all(config.builddir) {
+            return Err(AggregateError { errs: vec![ProgressError::CreateDir(path_to_string(config.builddir), f).into()] });
+        }
+
         let mut init_fn = None;
         let mut iter_fn = None;
 
         mem::swap(&mut init_fn, &mut self.init_fn);
         mem::swap(&mut iter_fn, &mut self.iter_fn);
 
+        let (multibar, total_bar, bars) = Self::create_multibar(self.bar_count.max(2));
+
         if let Some(init_fn) = init_fn {
-            init_fn(&self.total_bar, &self.bars);
+            init_fn(&total_bar, &bars);
         }
 
         let errors = rayon::scope(|s| {
@@ -104,20 +109,37 @@ where
                     // this should be fine as we should have the same number of progress bars as
                     // threads rayon uses for this iterator
                     if let Some(ref iter_fn) = iter_fn {
-                        let progbar = { self.bars.lock().unwrap().pop_front().unwrap() };
+                        let builddir = item.builddir(config);
+                        if !builddir.exists() {
+                            if let Err(f) = fs::create_dir(&builddir) {
+                                let mut errors = errors.lock().unwrap();
+                                let nerr = ProgressError::CreateDir(path_to_string(&builddir), f).into();
+                                errors.push(nerr);
+                                total_bar.set_message(&errors.len().to_string());
+                                total_bar.tick();
+                            }
+                        }
 
-                        iter_fn(item, &progbar, &self.total_bar, &errors);
+                        let progbar = { bars.lock().unwrap().pop_front().unwrap() };
 
-                        self.bars.lock().unwrap().push_back(progbar);
+                        iter_fn(item, &progbar, &total_bar, &errors);
+
+                        total_bar.inc(1);
+                        total_bar.tick();
+
+                        progbar.set_style(ProgressStyle::default_bar().template("Waiting/Done"));
+                        progbar.tick();
+
+                        bars.lock().unwrap().push_back(progbar);
                     }
                 });
-                for bar in self.bars.lock().unwrap().iter() {
+                for bar in bars.lock().unwrap().iter() {
                     bar.finish();
                 }
-                self.total_bar.finish_and_clear();
+                total_bar.finish_and_clear();
             });
 
-            if let Err(f) = self.multibar.join_and_clear() {
+            if let Err(f) = multibar.join_and_clear() {
                 errors.lock().unwrap().push(ProgressError::Multibar(f).into());
             }
             errors

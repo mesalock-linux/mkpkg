@@ -21,7 +21,7 @@ extern crate git2;
 
 // compression of downloaded files
 extern crate tar;
-extern crate libflate;
+extern crate flate2;
 extern crate bzip2;
 
 use clap::{Arg, ArgMatches, SubCommand};
@@ -32,6 +32,7 @@ use std::process;
 use config::{Action, Config};
 
 mod archive;
+//mod builder;
 mod config;
 mod network;
 #[macro_use]
