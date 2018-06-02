@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use archive::Archiver;
-//use builder::Builder;
+use builder::Builder;
 use network::Downloader;
 use package::BuildFile;
 
@@ -51,25 +51,25 @@ impl<'a> Action<'a> {
                 }
             }
             Build { pkgs } => {
+                // TODO: should try to extract and build once there are less than rayon::current_num_threads() downloads left
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
+                // TODO: only download the file if it doesn't exist/is corrupted/is incomplete
                 self.download(config, &buildfiles);
 
                 for pkg in pkgs.clone().into_iter() {
                     let buildfile = BuildFile::open(config.pkgdir, pkg)?;
 
-                    println!("{:?}", buildfile);
-
                     Archiver::new().extract(config, &buildfile)?;
-                    //Builder::new().build_pkgs(config, &buildfiles)?;
                 }
+
+                Builder::new().build_pkgs(config, &buildfiles)?;
             }
             Describe { pkgs } => {
-                let pkgs: Vec<_> = pkgs.clone().collect();
-                println!("displaying information about {} package(s)", pkgs.len());
+                let buildfiles = self.gather_buildfiles(config, pkgs)?;
 
-                for pkg in pkgs.clone().into_iter() {
-                    let buildfile = BuildFile::open(config.pkgdir, pkg)?;
+                println!("displaying information about {} package(s)", buildfiles.len());
 
+                for buildfile in buildfiles {
                     println!("\n{}", buildfile.info());
                 }
             }

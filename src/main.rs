@@ -8,12 +8,12 @@ extern crate ansi_term;
 extern crate rayon;
 extern crate semver;
 extern crate url;
-extern crate url_serde;
 extern crate failure;
 #[macro_use]
 extern crate failure_derive;
 extern crate indicatif;
 extern crate tempfile;
+extern crate unicode_xid;
 
 // downloading source code/patches
 extern crate reqwest;
@@ -23,6 +23,7 @@ extern crate git2;
 extern crate tar;
 extern crate flate2;
 extern crate bzip2;
+extern crate xz2;
 
 use clap::{Arg, ArgMatches, SubCommand};
 use std::ffi::OsStr;
@@ -32,7 +33,7 @@ use std::process;
 use config::{Action, Config};
 
 mod archive;
-//mod builder;
+mod builder;
 mod config;
 mod network;
 #[macro_use]

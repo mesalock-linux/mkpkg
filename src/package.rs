@@ -1,9 +1,9 @@
 use failure::{Error, ResultExt};
-use serde::{Deserialize, Deserializer};
 use serde_yaml;
 use semver::Version;
 use url::Url;
-use url_serde;
+use unicode_xid::UnicodeXID;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::BufReader;
@@ -17,12 +17,13 @@ pub enum PackageError {
     UnknownFilePath(Url),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct BuildFile {
+    env: Option<HashMap<String, String>>,
     package: Package,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 struct Package {
     name: String,
     version: Version,
@@ -30,8 +31,27 @@ struct Package {
     license: Vec<String>,
     
     // files to download
-    #[serde(deserialize_with = "vec_urls")]
     source: Vec<Url>,
+
+    prepare: Option<Vec<String>>,
+    build: Option<Vec<String>>,
+    install: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildFileRaw {
+    env: Option<HashMap<String, String>>,
+    package: PackageRaw,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackageRaw {
+    name: String,
+    version: String,
+    description: String,
+    license: Vec<String>,
+
+    source: Vec<String>,
 
     prepare: Option<Vec<String>>,
     build: Option<Vec<String>>,
@@ -49,7 +69,52 @@ impl BuildFile {
         })?;
 
         let reader = BufReader::new(file);
-        Ok(serde_yaml::from_reader(reader)?)
+        let buildfile: BuildFileRaw = serde_yaml::from_reader(reader)?;
+
+        let (env, mut package) = (buildfile.env, buildfile.package);
+
+        if let Some(ref env) = env {
+            for (key, val) in env {
+                let key = format!("${}", key);
+                package.name = subst_vars(&package.name, &key, val);
+                package.version = subst_vars(&package.version, &key, val);
+                package.description = subst_vars(&package.description, &key, val);
+                for license in &mut package.license {
+                    *license = subst_vars(license, &key, val);
+                }
+                for src in &mut package.source {
+                    *src = subst_vars(src, &key, val);
+                }
+                // don't need to do anything with prepare/build/install as we just attach the env
+                // vars as environment variables to `sh`
+            }
+        }
+
+        Ok(BuildFile {
+            env: env,
+            package: Package {
+                name: package.name,
+                version: Version::parse(&package.version)?,
+                description: package.description,
+                license: package.license,
+
+                source: {
+                    let source = package.source
+                        .into_iter()
+                        .map(|url| Url::parse(&url))
+                        .collect::<Result<_, _>>()?;
+                    source
+                },
+
+                prepare: package.prepare,
+                build: package.build,
+                install: package.install,
+            }
+        })
+    }
+
+    pub fn env(&self) -> Option<&HashMap<String, String>> {
+        self.env.as_ref()
     }
 
     pub fn name(&self) -> &str {
@@ -88,6 +153,10 @@ impl BuildFile {
         self.package.builddir(config)
     }
 
+    pub fn archive_out_dir(&self, config: &Config) -> PathBuf {
+        self.package.archive_out_dir(config)
+    }
+
     pub fn info(&self) -> String {
         self.package.info()
     }
@@ -104,6 +173,10 @@ impl BuildFile {
 impl Package {
     pub fn builddir(&self, config: &Config) -> PathBuf {
         config.builddir.join(format!("{}-{}", self.name, self.version))
+    }
+
+    pub fn archive_out_dir(&self, config: &Config) -> PathBuf {
+        self.builddir(config).join("out")
     }
 
     // TODO: colors and which section the package is in (e.g. core or testing)
@@ -129,13 +202,15 @@ impl Package {
     }
 }
 
-fn vec_urls<'de, D>(deserializer: D) -> Result<Vec<Url>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    struct Wrapper(#[serde(with = "url_serde")] Url);
-
-    let vec = Vec::deserialize(deserializer)?;
-    Ok(vec.into_iter().map(|Wrapper(url)| url).collect())
+fn subst_vars(input: &str, key: &str, value: &str) -> String {
+    let mut split = input.split(key);
+    let result = split.next().unwrap().to_string();
+    split.fold(result, |mut acc, val| {
+        acc.push_str(match val.chars().next() {
+            Some(ch) if UnicodeXID::is_xid_continue(ch) => key,
+            _ => value,
+        });
+        acc.push_str(val);
+        acc
+    })
 }
