@@ -46,7 +46,7 @@ impl<T: Fail> fmt::Display for AggregateError<T> {
 pub struct Progress<In, It, E>
 where
     In: Fn(&ProgressBar, &Mutex<VecDeque<ProgressBar>>),
-    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Mutex<Vec<E>>),
+    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Fn(E)) -> Result<(), E>,
     E: From<ProgressError> + Fail,
 {
     bar_count: usize,
@@ -58,7 +58,7 @@ where
 impl<In, It, E> Progress<In, It, E>
 where
     In: Fn(&ProgressBar, &Mutex<VecDeque<ProgressBar>>) + Send + Sync,
-    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Mutex<Vec<E>>) + Send + Sync,
+    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Fn((E))) -> Result<(), E> + Send + Sync,
     E: From<ProgressError> + Fail,
 {
     pub fn new(bar_count: usize) -> Self {
@@ -69,8 +69,6 @@ where
             _phantom: ::std::marker::PhantomData,
         }
     }
-
-    //pub fn with_
 
     pub fn on_init(&mut self, cb: In) {
         self.init_fn = Some(cb);
@@ -109,20 +107,30 @@ where
                     // this should be fine as we should have the same number of progress bars as
                     // threads rayon uses for this iterator
                     if let Some(ref iter_fn) = iter_fn {
+                        let add_error = |err: E| {
+                            let mut errors = errors.lock().unwrap();
+                            errors.push(err);
+                            total_bar.set_message(&errors.len().to_string());
+                            total_bar.tick();
+
+                            if config.fail_fast {
+                                // TODO: figure out a way to exit immediately
+                            }
+                        };
+
                         let builddir = item.builddir(config);
                         if !builddir.exists() {
                             if let Err(f) = fs::create_dir(&builddir) {
-                                let mut errors = errors.lock().unwrap();
                                 let nerr = ProgressError::CreateDir(path_to_string(&builddir), f).into();
-                                errors.push(nerr);
-                                total_bar.set_message(&errors.len().to_string());
-                                total_bar.tick();
+                                add_error(nerr);
                             }
                         }
 
                         let progbar = { bars.lock().unwrap().pop_front().unwrap() };
 
-                        iter_fn(item, &progbar, &total_bar, &errors);
+                        if let Err(f) = iter_fn(item, &progbar, &total_bar, &add_error) {
+                            add_error(f);
+                        }
 
                         total_bar.inc(1);
                         total_bar.tick();
@@ -181,6 +189,6 @@ where
     }
 
     fn total_style() -> ProgressStyle {
-        ProgressStyle::default_bar().template("{wide_bar} {pos}/{len} packages ({msg} errors)")
+        ProgressStyle::default_bar().template("{prefix}{wide_bar} {pos}/{len} packages ({msg} errors)")
     }
 }

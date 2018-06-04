@@ -19,9 +19,12 @@ failure_derive = "0.1.1"
 tar = "0.4.15"
 semver = { version = "0.9.0", features = ["serde"] }
 url = "1.7.0"
-url_serde = "0.2.0"
 tempfile = "3.0.2"
+unicode-xid = "0.1.0"
+term_size = "1.0.0-beta1"
+walkdir = "2.1.4"
 # the following are bindings to code written in C
 git2 = "0.7.1"
 bzip2 = "0.3.3"
 flate2 = "1.0.1"
+xz2 = "0.1.5"

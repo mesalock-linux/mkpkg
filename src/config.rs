@@ -53,8 +53,7 @@ impl<'a> Action<'a> {
             Build { pkgs } => {
                 // TODO: should try to extract and build once there are less than rayon::current_num_threads() downloads left
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
-                // TODO: only download the file if it doesn't exist/is corrupted/is incomplete
-                self.download(config, &buildfiles);
+                self.download(config, &buildfiles)?;
 
                 for pkg in pkgs.clone().into_iter() {
                     let buildfile = BuildFile::open(config.pkgdir, pkg)?;
@@ -115,6 +114,7 @@ pub struct Config<'a> {
     pub licenses: Vec<OsString>,
     pub verbose: bool,
     pub clobber: bool,
+    pub fail_fast: bool,
     pub action: Action<'a>,
 }
 

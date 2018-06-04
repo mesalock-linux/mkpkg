@@ -1,10 +1,11 @@
 use tar;
 use flate2::bufread::GzDecoder;
 use bzip2::bufread::BzDecoder;
-use xz2::bufread::XzDecoder;
+use xz2::bufread::{XzDecoder, XzEncoder};
 use tempfile;
+use walkdir::WalkDir;
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -64,13 +65,47 @@ impl<R: BufRead> CompDecoder<R> for XzDecoder<R> {
 }
 
 impl Archiver {
+    const XZ_LEVEL: u32 = 6;
+
     pub fn new() -> Self {
         Self { }
     }
 
-    pub(crate) fn extract(&self, config: &Config, pkg: &BuildFile) -> Result<(), ArchiveError> {
+    // TODO: check for errors
+    pub fn package(&self, config: &Config, pkg: &BuildFile) -> Result<(), ArchiveError> {
+        let tar_path = pkg.builddir(config).join(format!("{}-{}.tar", pkg.name(), pkg.version()));
+        if tar_path.exists() {
+            fs::remove_file(&tar_path).unwrap();
+        }
+        let mut tar_file = OpenOptions::new().read(true).write(true).create_new(true).open(&tar_path).unwrap();
+
+        {
+            let mut builder = tar::Builder::new(BufWriter::new(&mut tar_file));
+            builder.follow_symlinks(false);
+            // XXX: set header mode?
+            // XXX: do we care what type of tar file?  (default is GNU)
+
+            builder.append_dir_all(".", pkg.builddir(config).join("pkgdir")).unwrap();
+            builder.finish().unwrap();
+        }
+
+        // now compress the archive
+        tar_file.seek(SeekFrom::Start(0)).unwrap();
+        let package_path = pkg.builddir(config).join(format!("{}-{}.tar.xz", pkg.name(), pkg.version()));
+        if package_path.exists() {
+            fs::remove_file(&package_path).unwrap();
+        }
+        let package_file = File::create(package_path).unwrap();
+        io::copy(&mut XzEncoder::new(BufReader::new(tar_file), Self::XZ_LEVEL), &mut BufWriter::new(package_file)).unwrap();
+
+        fs::remove_file(tar_path).unwrap();
+
+        Ok(())
+    }
+
+    pub fn extract(&self, config: &Config, pkg: &BuildFile) -> Result<(), ArchiveError> {
         for src in pkg.source() {
-            let build_path = pkg.file_build_path(config, src).map_err(|e| ArchiveError::Package(e))?;
+            let build_path = pkg.file_download_path(config, src).map_err(|e| ArchiveError::Package(e))?;
 
             if let Some(filename) = build_path.file_name() {
                 const IS_TAR: &[&[u8]] = &[b".tar.gz", b".tar.bz2", b".tar.xz", b".tgz", b".tbz", b".txz"];
@@ -79,6 +114,7 @@ impl Archiver {
                 const IS_XZ: &[&[u8]] = &[b".xz", b".txz"];
 
                 let filename = filename.as_bytes();
+                let mut found = false;
 
                 let res = self.try_extraction(filename, &build_path, IS_GZ, |path| self.decompress::<GzDecoder<_>>(path))
                     .or_else(|| self.try_extraction(filename, &build_path, IS_BZIP2, |path| self.decompress::<BzDecoder<_>>(path)))
@@ -86,14 +122,53 @@ impl Archiver {
 
                 // should probably use .transpose() when that is stable
                 let file = match res {
-                    Some(Ok(file)) => Some(file),
+                    Some(Ok(file)) => {
+                        found = true;
+                        Some(file)
+                    }
                     Some(Err(f)) => return Err(f),
                     None => None,
                 };
 
                 if let Some(res) = self.try_extraction(filename, &build_path, IS_TAR, |path| self.extract_tar(config, pkg, path, file)) {
                     res?;
+                    found = true;
                 }
+
+                if !found {
+                    // move the file/directory into place even though it wasn't extracted
+                    // TODO: handle error
+                    self.copy_dir(&build_path, &pkg.archive_out_dir(config)).unwrap();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn copy_dir<S: AsRef<Path> + ?Sized, D: AsRef<Path> + ?Sized>(&self, source: &S, dest: &D) -> io::Result<()> {
+        let (source, dest) = (source.as_ref(), dest.as_ref());
+        if dest.exists() {
+            fs::remove_dir_all(dest)?;
+        }
+        fs::create_dir(dest)?;
+
+        let parent = match source.parent() {
+            Some(val) => val,
+            // FIXME: figure out what this should do (basically this means the source is '/', which i don't think can happen)
+            None => unimplemented!()
+        };
+
+        for entry in WalkDir::new(source) {
+            let entry = entry?;
+
+            // TODO: handle error
+            let subpath = entry.path().strip_prefix(parent).unwrap();
+
+            if entry.file_type().is_dir() {
+                fs::create_dir(dest.join(subpath))?;
+            } else {
+                fs::copy(entry.path(), dest.join(subpath))?;
             }
         }
 

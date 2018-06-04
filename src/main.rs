@@ -14,6 +14,8 @@ extern crate failure_derive;
 extern crate indicatif;
 extern crate tempfile;
 extern crate unicode_xid;
+extern crate term_size;
+extern crate walkdir;
 
 // downloading source code/patches
 extern crate reqwest;
@@ -36,8 +38,6 @@ mod archive;
 mod builder;
 mod config;
 mod network;
-#[macro_use]
-mod macros;
 mod package;
 mod progress;
 #[allow(dead_code)]
@@ -66,6 +66,9 @@ fn main() {
                     .arg(Arg::with_name("clobber")
                             .long("clobber")
                             .help("Clobber any existing output from previous build attempts"))
+                    .arg(Arg::with_name("fail-fast")
+                            .long("fail-fast")
+                            .help("Stop as soon as an error occurs"))
                     .subcommand(SubCommand::with_name("download")
                             .arg(Arg::with_name("PKG")
                                     .index(1)
@@ -109,6 +112,7 @@ fn main() {
         licenses: licenses,
         verbose: matches.is_present("verbose"),
         clobber: matches.is_present("clobber"),
+        fail_fast: matches.is_present("fail-fast"),
         action: determine_action(&matches),
     };
 

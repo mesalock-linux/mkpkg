@@ -73,6 +73,12 @@ impl BuildFile {
 
         let (env, mut package) = (buildfile.env, buildfile.package);
 
+        // FIXME: rewrite so that all the variables are substituted at once rather than one at a
+        //        time the current way means that if a variable $var=$hi is substituted first, then
+        //        if there is another variable $hi, it will get substituted as well (variables
+        //        should not depend on each other in the env array to avoid circular references).
+        //        of course, if the user ends up triggering this somehow they pretty much asked for
+        //        it to happen, but the less footguns the better
         if let Some(ref env) = env {
             for (key, val) in env {
                 let key = format!("${}", key);
@@ -153,8 +159,20 @@ impl BuildFile {
         self.package.builddir(config)
     }
 
+    pub fn download_dir(&self, config: &Config) -> PathBuf {
+        self.package.download_dir(config)
+    }
+
     pub fn archive_out_dir(&self, config: &Config) -> PathBuf {
         self.package.archive_out_dir(config)
+    }
+
+    pub fn stdout_log(&self, config: &Config) -> String {
+        self.package.stdout_log(config)
+    }
+
+    pub fn stderr_log(&self, config: &Config) -> String {
+        self.package.stderr_log(config)
     }
 
     pub fn info(&self) -> String {
@@ -165,14 +183,28 @@ impl BuildFile {
         Package::file_path(url)
     }
 
-    pub fn file_build_path(&self, config: &Config, url: &Url) -> Result<PathBuf, PackageError> {
-        self.package.file_build_path(config, url)
+    pub fn file_download_path(&self, config: &Config, url: &Url) -> Result<PathBuf, PackageError> {
+        self.package.file_download_path(config, url)
     }
 }
 
 impl Package {
+    // FIXME: both stdout_log and stderr_log should output to a log directory specified in config
+    // FIXME: should return PathBuf when the above is added
+    pub fn stdout_log(&self, _config: &Config) -> String {
+        format!("{}-{}-stdout.log", self.name, self.version)
+    }
+
+    pub fn stderr_log(&self, _config: &Config) -> String {
+        format!("{}-{}-stderr.log", self.name, self.version)
+    }
+
     pub fn builddir(&self, config: &Config) -> PathBuf {
         config.builddir.join(format!("{}-{}", self.name, self.version))
+    }
+
+    pub fn download_dir(&self, config: &Config) -> PathBuf {
+        self.builddir(config).join("download")
     }
 
     pub fn archive_out_dir(&self, config: &Config) -> PathBuf {
@@ -197,8 +229,8 @@ impl Package {
         Ok(filename)
     }
 
-    pub fn file_build_path(&self, config: &Config, url: &Url) -> Result<PathBuf, PackageError> {
-        Ok(self.builddir(config).join(Package::file_path(url)?))
+    pub fn file_download_path(&self, config: &Config, url: &Url) -> Result<PathBuf, PackageError> {
+        Ok(self.download_dir(config).join(Package::file_path(url)?))
     }
 }
 
