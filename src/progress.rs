@@ -43,34 +43,17 @@ impl fmt::Display for AggregateError {
     }
 }
 
-pub trait InitFn: Fn(&ProgressBar, &ProgressBar) + Send + Sync {}
-impl<T> InitFn for T
-where
-    T: Fn(&ProgressBar, &ProgressBar) + Send + Sync,
-{
-}
-
-pub trait IterFn:
-    Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error>
-    + Send
-    + Sync
-{
-}
-impl<T> IterFn for T
-where
-    T: Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error>
-        + Send
-        + Sync,
-{
-}
-
-//pub type InitFn<'a> = &'a (Fn(&ProgressBar, &ProgressBar) + Send + Sync);
-//pub type IterFn<'a> = &'a (Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error> + Send + Sync);
+pub type InitFn<'a> = (Fn(&ProgressBar, &ProgressBar) + Send + Sync + 'a);
+pub type IterFn<'a> = (Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error))
+    -> Result<(), Error>
+     + Send
+     + Sync
+     + 'a);
 
 pub struct Progress<'a> {
     bar_count: usize,
-    init_fns: Vec<&'a InitFn<Output = ()>>,
-    iter_fns: Vec<&'a IterFn<Output = Result<(), Error>>>,
+    init_fns: Vec<&'a InitFn<'a>>,
+    iter_fns: Vec<&'a IterFn<'a>>,
 }
 
 impl<'a> Progress<'a> {
@@ -82,11 +65,7 @@ impl<'a> Progress<'a> {
         }
     }
 
-    pub fn add_step(
-        &mut self,
-        init: &'a InitFn<Output = ()>,
-        iter: &'a IterFn<Output = Result<(), Error>>,
-    ) {
+    pub fn add_step(&mut self, init: &'a InitFn<'a>, iter: &'a IterFn<'a>) {
         self.init_fns.push(init);
         self.iter_fns.push(iter);
     }

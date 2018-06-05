@@ -1,9 +1,8 @@
-use failure::Error;
 use git2::build::RepoBuilder;
 use git2::{self, FetchOptions, RemoteCallbacks, Repository};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::header::{AcceptRanges, ByteRangeSpec, ContentLength, ContentRange, ContentRangeSpec,
-                      Headers, IfRange, LastModified, Range, RangeUnit};
+                      Headers, Range, RangeUnit};
 use reqwest::{self, Client};
 use url::Url;
 
@@ -74,10 +73,7 @@ impl Downloader {
         &'a self,
         _config: &Config,
         pkgs: &[BuildFile],
-    ) -> (
-        Box<InitFn<Output = ()> + 'a>,
-        Box<IterFn<Output = Result<(), Error>> + 'a>,
-    ) {
+    ) -> (Box<InitFn<'a>>, Box<IterFn<'a>>) {
         let pkgslen = pkgs.len();
 
         let init_fn = move |total_bar: &ProgressBar, bar: &ProgressBar| {

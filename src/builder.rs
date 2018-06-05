@@ -1,8 +1,6 @@
-use failure::Error;
 use indicatif::{ProgressBar, ProgressStyle};
 use term_size;
 
-use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
@@ -75,10 +73,7 @@ impl Builder {
         &'a self,
         _config: &Config,
         pkgs: &[BuildFile],
-    ) -> (
-        Box<InitFn<Output = ()> + 'a>,
-        Box<IterFn<Output = Result<(), Error>> + 'a>,
-    ) {
+    ) -> (Box<InitFn<'a>>, Box<IterFn<'a>>) {
         let pkgslen = pkgs.len();
 
         let init_fn = move |total_bar: &ProgressBar, bar: &ProgressBar| {
@@ -90,7 +85,6 @@ impl Builder {
             //        `wait_timeout` for this.
             bar.enable_steady_tick(250);
 
-            // FIXME: can't do this
             total_bar.set_prefix("Building... ");
             total_bar.set_length(pkgslen as u64);
             total_bar.tick();
