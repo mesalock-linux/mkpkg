@@ -10,6 +10,8 @@ use archive::Archiver;
 use builder::Builder;
 use network::Downloader;
 use package::BuildFile;
+use progress::Progress;
+use util;
 
 pub enum Action<'a> {
     // attempt to download a given package
@@ -51,11 +53,24 @@ impl<'a> Action<'a> {
                 }
             }
             Build { pkgs } => {
-                // TODO: should try to extract and build once there are less than rayon::current_num_threads() downloads left
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
-                self.download(config, &buildfiles)?;
 
-                Builder::new().build_pkgs(config, &buildfiles)?;
+                let bar_count = buildfiles.len() + 1;
+
+                let downloader = Downloader::new();
+                let builder = Builder::new();
+
+                let (download_init, download_iter) = downloader.download_setup(config, &buildfiles);
+                let (build_init, build_iter) = builder.build_setup(config, &buildfiles);
+
+                {
+                    let mut progress = Progress::new(bar_count);
+
+                    progress.add_step(&*download_init, &*download_iter);
+                    progress.add_step(&*build_init, &*build_iter);
+
+                    progress.run(config, buildfiles.iter())?;
+                }
             }
             Describe { pkgs } => {
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;

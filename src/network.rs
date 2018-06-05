@@ -1,7 +1,7 @@
+use failure::Error;
 use git2::build::RepoBuilder;
 use git2::{self, FetchOptions, RemoteCallbacks, Repository};
 use indicatif::{ProgressBar, ProgressStyle};
-use rayon::prelude::*;
 use reqwest::{self, Client};
 use reqwest::header::{Headers, AcceptRanges, ByteRangeSpec, ContentLength, ContentRange, ContentRangeSpec, IfRange, LastModified, Range, RangeUnit};
 use url::Url;
@@ -11,7 +11,7 @@ use std::io::{self, BufWriter, Read, Write};
 use std::time::{Duration, Instant};
 
 use package::{BuildFile, PackageError};
-use progress::{AggregateError, ProgressError, Progress};
+use progress::{AggregateError, InitFn, IterFn, ProgressError, Progress};
 use util::path_to_string;
 
 use super::Config;
@@ -69,24 +69,18 @@ impl Downloader {
         }
     }
 
-    // TODO: check if download of correct file has already occurred and ensure the downloaded file
-    //       is complete/not corrupted (to do so we would need some sort of checksums).  if so, we
-    //       can skip that download
-    pub fn download_pkgs(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), AggregateError<NetworkError>> {
-        let bar_count = pkgs.len() + 1;
-        let mut progress = Progress::new(bar_count);
+    pub fn download_setup<'a>(&'a self, config: &Config, pkgs: &[BuildFile]) -> (Box<InitFn<Output = ()> + 'a>, Box<IterFn<Output = Result<(), Error>> + 'a>) {
+        let pkgslen = pkgs.len();
 
-        progress.on_init(|total_bar, bars| {
-            for bar in bars.lock().unwrap().iter() {
-                bar.set_style(self.bar_style());
-            }
+        let init_fn = move |total_bar: &ProgressBar, bar: &ProgressBar| {
+            bar.set_style(self.bar_style());
 
-            total_bar.set_length(pkgs.len() as u64);
+            total_bar.set_length(pkgslen as u64);
             total_bar.tick();
-        });
+        };
 
-        progress.on_iter(|pkg: &BuildFile, progbar, _total_bar, add_error| {
-            let download_dir = pkg.download_dir(config);
+        let iter_fn = move |config: &Config, pkg: &BuildFile, progbar: &ProgressBar, _total_bar: &ProgressBar, add_error: &Fn(::failure::Error)| {
+            let inner = || -> Result<(), NetworkError> {let download_dir = pkg.download_dir(config);
             fs::create_dir_all(&download_dir).map_err(|e| NetworkError::CreateDir(path_to_string(&download_dir), e))?;
 
             for (i, url) in pkg.source().iter().enumerate() {
@@ -94,14 +88,33 @@ impl Downloader {
                 progbar.set_position(0);
                 
                 if let Err(f) = self.download(&progbar, pkg, config, url) {
-                    add_error(f);
+                    add_error(f.into());
                 }
             }
 
             Ok(())
-        });
+            };
+            inner().map_err(|e| e.into())
+        };
 
-        progress.run(config, pkgs.par_iter())
+        (Box::new(init_fn), Box::new(iter_fn))
+    }
+
+    // TODO: check if download of correct file has already occurred and ensure the downloaded file
+    //       is complete/not corrupted (to do so we would need some sort of checksums).  if so, we
+    //       can skip that download
+    pub fn download_pkgs(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), AggregateError> {
+        let bar_count = pkgs.len() + 1;
+
+        let (init_fn, iter_fn) = self.download_setup(config, pkgs);
+
+        {
+            let mut progress = Progress::new(bar_count);
+
+            progress.add_step(&*init_fn, &*iter_fn);
+
+            progress.run(config, pkgs.iter())
+        }
     }
 
     fn download(&self, progbar: &ProgressBar, pkg: &BuildFile, config: &Config, url: &Url) -> Result<(), NetworkError> {

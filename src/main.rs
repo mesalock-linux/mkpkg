@@ -5,7 +5,8 @@ extern crate serde_yaml;
 #[macro_use]
 extern crate clap;
 extern crate ansi_term;
-extern crate rayon;
+extern crate crossbeam;
+extern crate num_cpus;
 extern crate semver;
 extern crate url;
 extern crate failure;

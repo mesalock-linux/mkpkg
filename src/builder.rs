@@ -1,6 +1,5 @@
+use failure::Error;
 use indicatif::{ProgressBar, ProgressStyle};
-use rayon::prelude::*;
-use rayon;
 use term_size;
 
 use std::borrow::Cow;
@@ -11,8 +10,8 @@ use std::process::{Command, Stdio};
 use archive::{Archiver, ArchiveError};
 use config::Config;
 use package::BuildFile;
-use progress::{AggregateError, Progress, ProgressError};
-use util::path_to_string;
+use progress::{AggregateError, InitFn, IterFn, Progress, ProgressError};
+use util::{self, path_to_string};
 
 #[derive(Debug, Fail)]
 pub enum BuildError {
@@ -74,29 +73,27 @@ impl Builder {
         Self { }
     }
 
-    pub fn build_pkgs(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), AggregateError<BuildError>> {
-        let bar_count = pkgs.len() + 1;
-        let mut progress = Progress::new(bar_count);
+    pub fn build_setup<'a>(&'a self, config: &Config, pkgs: &[BuildFile]) -> (Box<InitFn<Output = ()> + 'a>, Box<IterFn<Output = Result<(), Error>> + 'a>) {
+        let pkgslen = pkgs.len();
 
-        progress.on_init(|total_bar, bars| {
-            for bar in bars.lock().unwrap().iter() {
-                bar.set_style(self.spinner_style());
-                // FIXME: this spawns an extra thread for every progress bar (a fix might be to
-                //        catch SIGCHLD in another thread and set condvars or something for the
-                //        progress bar threads such that they will only stop ticking the progress
-                //        bar when the child they spawned is dead).  we might be able to use
-                //        `wait_timeout` for this.
-                bar.enable_steady_tick(250);
-            }
+        let init_fn = move |total_bar: &ProgressBar, bar: &ProgressBar| {
+            bar.set_style(self.spinner_style());
+            // FIXME: this spawns an extra thread for every progress bar (a fix might be to
+            //        catch SIGCHLD in another thread and set condvars or something for the
+            //        progress bar threads such that they will only stop ticking the progress
+            //        bar when the child they spawned is dead).  we might be able to use
+            //        `wait_timeout` for this.
+            bar.enable_steady_tick(250);
 
+            // FIXME: can't do this
             total_bar.set_prefix("Building... ");
-            total_bar.set_length(pkgs.len() as u64);
+            total_bar.set_length(pkgslen as u64);
             total_bar.tick();
-        });
+        };
 
         // TODO: make archiver.extract() take a progbar or something (or maybe Archiver::new()?)
-        progress.on_iter(|pkg: &BuildFile, progbar, _total_bar, _add_error| {
-            progbar.set_prefix(pkg.name());
+        let iter_fn = move |config: &Config, pkg: &BuildFile, progbar: &ProgressBar, _total_bar: &ProgressBar, _add_error: &Fn(::failure::Error)| {
+            let inner = || -> Result<(), BuildError> {progbar.set_prefix(pkg.name());
 
             progbar.set_message("extracting");
             let archiver = Archiver::new();
@@ -132,9 +129,24 @@ impl Builder {
             // now that everything is built and put in place we need to package up pkgdir
             progbar.set_message("packaging");
             archiver.package(config, pkg).map_err(|e| BuildError::Archive(e))
-        });
+            };
+            inner().map_err(|e| e.into())
+        };
 
-        progress.run(config, pkgs.par_iter())
+        (Box::new(init_fn), Box::new(iter_fn))
+    }
+
+    pub fn build_pkgs(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), AggregateError> {
+        let bar_count = pkgs.len() + 1;
+
+        let (init_fn, iter_fn) = self.build_setup(config, pkgs);
+
+{        let mut progress = Progress::new(bar_count);
+
+
+        progress.add_step(&*init_fn, &*iter_fn);
+
+        progress.run(config, pkgs.iter())}
     }
 
     fn run_step(&self, progbar: &ProgressBar, config: &Config, pkg: &BuildFile, step: Option<&Vec<String>>, stdout: Option<&File>, stderr: Option<&File>) -> Result<(), BuildError> {
@@ -186,7 +198,7 @@ impl Builder {
 
         // TODO: load user-specified default env vars from a file
         //       should replace the below
-        sh.env("MAKEFLAGS", format!("-j{}", rayon::current_num_threads()));
+        sh.env("MAKEFLAGS", format!("-j{}", util::cpu_count()));
 
         if let Some(env) = pkg.env() {
             sh.envs(env);

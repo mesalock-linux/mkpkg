@@ -1,24 +1,20 @@
-use failure::Fail;
+use failure::{Error, Fail};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use rayon::prelude::*;
-use rayon;
+use crossbeam::sync::SegQueue as Queue;
+use crossbeam;
 
-use std::collections::VecDeque;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::mem;
-use std::sync::{self, Arc, Mutex};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use config::Config;
 use package::BuildFile;
-use util::path_to_string;
+use util::{self, path_to_string};
 
 #[derive(Debug, Fail)]
 pub enum ProgressError {
-    #[fail(display = "failed to lock mutex: {}", _0)]
-    Lock(#[cause] sync::PoisonError<VecDeque<ProgressBar>>),
-
     #[fail(display = "failed to clear progress bars: {}", _0)]
     Multibar(#[cause] io::Error),
 
@@ -27,13 +23,13 @@ pub enum ProgressError {
 }
 
 #[derive(Debug)]
-pub struct AggregateError<T: Fail> {
-    pub(crate) errs: Vec<T>,
+pub struct AggregateError {
+    pub(crate) errs: Vec<Error>,
 }
 
-impl<T: Fail> Fail for AggregateError<T> { }
+impl Fail for AggregateError { }
 
-impl<T: Fail> fmt::Display for AggregateError<T> {
+impl fmt::Display for AggregateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "found the following {} error(s) while downloading packages", self.errs.len())?;
         for e in &self.errs {
@@ -43,117 +39,125 @@ impl<T: Fail> fmt::Display for AggregateError<T> {
     }
 }
 
-pub struct Progress<In, It, E>
-where
-    In: Fn(&ProgressBar, &Mutex<VecDeque<ProgressBar>>),
-    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Fn(E)) -> Result<(), E>,
-    E: From<ProgressError> + Fail,
-{
+pub trait InitFn: Fn(&ProgressBar, &ProgressBar) + Send + Sync { }
+impl<T> InitFn for T where T: Fn(&ProgressBar, &ProgressBar) + Send + Sync { }
+
+pub trait IterFn: Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error> + Send + Sync { }
+impl<T> IterFn for T where T: Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error> + Send + Sync { }
+
+//pub type InitFn<'a> = &'a (Fn(&ProgressBar, &ProgressBar) + Send + Sync);
+//pub type IterFn<'a> = &'a (Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error> + Send + Sync);
+
+pub struct Progress<'a> {
     bar_count: usize,
-    init_fn: Option<In>,
-    iter_fn: Option<It>,
-    _phantom: ::std::marker::PhantomData<E>,
+    init_fns: Vec<&'a InitFn<Output = ()>>,
+    iter_fns: Vec<&'a IterFn<Output = Result<(), Error>>>,
 }
 
-impl<In, It, E> Progress<In, It, E>
-where
-    In: Fn(&ProgressBar, &Mutex<VecDeque<ProgressBar>>) + Send + Sync,
-    It: Fn(&BuildFile, &ProgressBar, &ProgressBar, &Fn((E))) -> Result<(), E> + Send + Sync,
-    E: From<ProgressError> + Fail,
-{
+impl<'a> Progress<'a> {
     pub fn new(bar_count: usize) -> Self {
         Self {
-            bar_count: bar_count.min(rayon::current_num_threads()),
-            init_fn: None,
-            iter_fn: None,
-            _phantom: ::std::marker::PhantomData,
+            bar_count: bar_count.min(util::cpu_count()),
+            init_fns: vec![],
+            iter_fns: vec![],
         }
     }
 
-    pub fn on_init(&mut self, cb: In) {
-        self.init_fn = Some(cb);
+    pub fn add_step(&mut self, init: &'a InitFn<Output = ()>, iter: &'a IterFn<Output = Result<(), Error>>) {
+        self.init_fns.push(init);
+        self.iter_fns.push(iter);
     }
 
-    pub fn on_iter(&mut self, cb: It) {
-        self.iter_fn = Some(cb);
-    }
-
-    pub fn run<'a, I: ParallelIterator<Item = &'a BuildFile>>(mut self, config: &Config, iter: I) -> Result<(), AggregateError<E>> {
+    pub fn run<'b, I: Iterator<Item = &'b BuildFile>>(&self, config: &Config, iter: I) -> Result<(), AggregateError> {
         if let Err(f) = fs::create_dir_all(config.builddir) {
             return Err(AggregateError { errs: vec![ProgressError::CreateDir(path_to_string(config.builddir), f).into()] });
+        } else if self.iter_fns.len() == 0 {
+            return Ok(());
         }
 
-        let mut init_fn = None;
-        let mut iter_fn = None;
+        let (multibar, total_bar) = Self::create_multibar(config);
 
-        mem::swap(&mut init_fn, &mut self.init_fn);
-        mem::swap(&mut iter_fn, &mut self.iter_fn);
-
-        let (multibar, total_bar, bars) = Self::create_multibar(config, self.bar_count.max(2));
-
-        if let Some(init_fn) = init_fn {
-            init_fn(&total_bar, &bars);
+        let first_queue = Queue::new();
+        for buildfile in iter {
+            first_queue.push(buildfile);
+        }
+        let mut queues = vec![first_queue];
+        for _ in 1..self.iter_fns.len() {
+            queues.push(Queue::new());
         }
 
-        let errors = rayon::scope(|s| {
-            let errors = Arc::new(Mutex::new(vec![]));
-            let errors_clone = errors.clone();
-            s.spawn(|_| {
-                let errors = errors_clone;
-                iter.for_each(|item| {
-                    // FIXME: because we no longer control the threads completely, we should check
-                    //        the lock result to see if there was an error
+        let queues = &queues[..];
+        let init_fns = &self.init_fns[..];
+        let iter_fns = &self.iter_fns[..];
 
-                    // this should be fine as we should have the same number of progress bars as
-                    // threads rayon uses for this iterator
-                    if let Some(ref iter_fn) = iter_fn {
-                        let add_error = |err: E| {
-                            let mut errors = errors.lock().unwrap();
-                            errors.push(err);
-                            total_bar.set_message(&errors.len().to_string());
-                            total_bar.tick();
+        let counter = AtomicUsize::new(self.bar_count.max(2) - 1);
 
-                            if config.fail_fast {
-                                // TODO: figure out a way to exit immediately
+        // TODO: reduce flickering when building many packages (use multibar.set_move_cursor(true))
+        let errors = Mutex::new(vec![]);
+        crossbeam::scope(|s| {
+            for _ in 1..self.bar_count {
+                s.spawn(|| {
+                    let mut current_queue = 0;
+
+                    let progbar = multibar.add(Self::create_progbar());
+
+                    init_fns[current_queue](&total_bar, &progbar);
+
+                    loop {
+                        if let Some(buildfile) = queues[current_queue].try_pop() {
+                            let add_error = |err: Error| {
+                                let mut errors = errors.lock().unwrap();
+                                errors.push(err);
+                                total_bar.set_message(&errors.len().to_string());
+
+                                if config.fail_fast {
+                                    // TODO: figure out a way to exit immediately
+                                }
+                            };
+
+                            let builddir = buildfile.builddir(config);
+                            if !builddir.exists() {
+                                if let Err(f) = fs::create_dir(&builddir) {
+                                    let nerr = ProgressError::CreateDir(path_to_string(&builddir), f).into();
+                                    add_error(nerr);
+                                    continue;
+                                }
                             }
-                        };
 
-                        let builddir = item.builddir(config);
-                        if !builddir.exists() {
-                            if let Err(f) = fs::create_dir(&builddir) {
-                                let nerr = ProgressError::CreateDir(path_to_string(&builddir), f).into();
-                                add_error(nerr);
+                            if let Err(f) = iter_fns[current_queue](config, buildfile, &progbar, &total_bar, &add_error) {
+                                add_error(f);
+                            } else {
+                                if current_queue + 1 < queues.len() {
+                                    queues[current_queue + 1].push(buildfile);
+                                } else {
+                                    // XXX: is it clearer if the total bar increases even on failure?
+                                    total_bar.inc(1);
+                                }
                             }
+                        } else {
+                            current_queue += 1;
+                            if current_queue == queues.len() {
+                                break;
+                            }
+
+                            init_fns[current_queue](&total_bar, &progbar);
                         }
+                    }
 
-                        let progbar = { bars.lock().unwrap().pop_front().unwrap() };
-
-                        if let Err(f) = iter_fn(item, &progbar, &total_bar, &add_error) {
-                            add_error(f);
-                        }
-
-                        total_bar.inc(1);
-                        total_bar.tick();
-
-                        progbar.set_style(ProgressStyle::default_bar().template("Waiting/Done"));
-                        progbar.tick();
-
-                        bars.lock().unwrap().push_back(progbar);
+                    progbar.finish_with_message("Done");
+                    counter.fetch_sub(1, Ordering::SeqCst);
+                    if counter.load(Ordering::SeqCst) == 0 {
+                        total_bar.finish_and_clear();
                     }
                 });
-                for bar in bars.lock().unwrap().iter() {
-                    bar.finish();
-                }
-                total_bar.finish_and_clear();
-            });
+            }
 
             if let Err(f) = multibar.join_and_clear() {
                 errors.lock().unwrap().push(ProgressError::Multibar(f).into());
             }
-            errors
         });
 
-        let errors = Arc::try_unwrap(errors).unwrap().into_inner().unwrap();
+        let errors = errors.into_inner().unwrap();
         if errors.len() > 0 {
             Err(AggregateError { errs: errors })
         } else {
@@ -162,7 +166,7 @@ where
     }
 
     // spawn bar_count progress bars (with one being the total progress bar)
-    fn create_multibar(config: &Config, bar_count: usize) -> (MultiProgress, ProgressBar, Arc<Mutex<VecDeque<ProgressBar>>>) {
+    fn create_multibar(config: &Config) -> (MultiProgress, ProgressBar) {
         let multibar = MultiProgress::new();
         // XXX: not sure if this is the best way (if we keep it like this, we need to display progress another way though)
         if config.verbose {
@@ -172,13 +176,7 @@ where
         let total_bar = multibar.add(Self::create_total_progbar());
         total_bar.set_message("0");
 
-        let mut bars = VecDeque::with_capacity(bar_count - 1);
-        for _ in 0..bar_count - 1 {
-            bars.push_back(multibar.add(Self::create_progbar()));
-        }
-        let bars = Arc::new(Mutex::new(bars));
-
-        (multibar, total_bar, bars)
+        (multibar, total_bar)
     }
 
     fn create_progbar() -> ProgressBar {

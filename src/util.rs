@@ -1,4 +1,6 @@
 use ansi_term::Color::{Green, Red, Yellow};
+use num_cpus;
+
 use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
@@ -25,4 +27,8 @@ pub fn display_failure(args: fmt::Arguments) -> io::Result<()> {
 
 pub fn path_to_string<P: AsRef<Path> + ?Sized>(path: &P) -> String {
     format!("{}", path.as_ref().display())
+}
+
+pub fn cpu_count() -> usize {
+    num_cpus::get()
 }
