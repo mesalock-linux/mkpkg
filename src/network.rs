@@ -2,8 +2,9 @@ use failure::Error;
 use git2::build::RepoBuilder;
 use git2::{self, FetchOptions, RemoteCallbacks, Repository};
 use indicatif::{ProgressBar, ProgressStyle};
+use reqwest::header::{AcceptRanges, ByteRangeSpec, ContentLength, ContentRange, ContentRangeSpec,
+                      Headers, IfRange, LastModified, Range, RangeUnit};
 use reqwest::{self, Client};
-use reqwest::header::{Headers, AcceptRanges, ByteRangeSpec, ContentLength, ContentRange, ContentRangeSpec, IfRange, LastModified, Range, RangeUnit};
 use url::Url;
 
 use std::fs::{self, OpenOptions};
@@ -11,7 +12,7 @@ use std::io::{self, BufWriter, Read, Write};
 use std::time::{Duration, Instant};
 
 use package::{BuildFile, PackageError};
-use progress::{AggregateError, InitFn, IterFn, ProgressError, Progress};
+use progress::{AggregateError, InitFn, IterFn, Progress, ProgressError};
 use util::path_to_string;
 
 use super::Config;
@@ -69,7 +70,14 @@ impl Downloader {
         }
     }
 
-    pub fn download_setup<'a>(&'a self, config: &Config, pkgs: &[BuildFile]) -> (Box<InitFn<Output = ()> + 'a>, Box<IterFn<Output = Result<(), Error>> + 'a>) {
+    pub fn download_setup<'a>(
+        &'a self,
+        _config: &Config,
+        pkgs: &[BuildFile],
+    ) -> (
+        Box<InitFn<Output = ()> + 'a>,
+        Box<IterFn<Output = Result<(), Error>> + 'a>,
+    ) {
         let pkgslen = pkgs.len();
 
         let init_fn = move |total_bar: &ProgressBar, bar: &ProgressBar| {
@@ -79,20 +87,26 @@ impl Downloader {
             total_bar.tick();
         };
 
-        let iter_fn = move |config: &Config, pkg: &BuildFile, progbar: &ProgressBar, _total_bar: &ProgressBar, add_error: &Fn(::failure::Error)| {
-            let inner = || -> Result<(), NetworkError> {let download_dir = pkg.download_dir(config);
-            fs::create_dir_all(&download_dir).map_err(|e| NetworkError::CreateDir(path_to_string(&download_dir), e))?;
+        let iter_fn = move |config: &Config,
+                            pkg: &BuildFile,
+                            progbar: &ProgressBar,
+                            _total_bar: &ProgressBar,
+                            add_error: &Fn(::failure::Error)| {
+            let inner = || -> Result<(), NetworkError> {
+                let download_dir = pkg.download_dir(config);
+                fs::create_dir_all(&download_dir)
+                    .map_err(|e| NetworkError::CreateDir(path_to_string(&download_dir), e))?;
 
-            for (i, url) in pkg.source().iter().enumerate() {
-                progbar.set_prefix(&format!("{}/{}", pkg.name(), i + 1));
-                progbar.set_position(0);
-                
-                if let Err(f) = self.download(&progbar, pkg, config, url) {
-                    add_error(f.into());
+                for (i, url) in pkg.source().iter().enumerate() {
+                    progbar.set_prefix(&format!("{}/{}", pkg.name(), i + 1));
+                    progbar.set_position(0);
+
+                    if let Err(f) = self.download(&progbar, pkg, config, url) {
+                        add_error(f.into());
+                    }
                 }
-            }
 
-            Ok(())
+                Ok(())
             };
             inner().map_err(|e| e.into())
         };
@@ -117,12 +131,18 @@ impl Downloader {
         }
     }
 
-    fn download(&self, progbar: &ProgressBar, pkg: &BuildFile, config: &Config, url: &Url) -> Result<(), NetworkError> {
+    fn download(
+        &self,
+        progbar: &ProgressBar,
+        pkg: &BuildFile,
+        config: &Config,
+        url: &Url,
+    ) -> Result<(), NetworkError> {
         let filename = BuildFile::file_path(url).map_err(|e| NetworkError::Package(e))?;
 
         match url.scheme() {
             "http" | "https" => {
-                // as we require git URLs to be prefixed with "git+", this should be fine 
+                // as we require git URLs to be prefixed with "git+", this should be fine
                 self.download_http(progbar, pkg, config, url, filename)
             }
             "git+http" | "git+https" | "git" | "git+ssh" => {
@@ -131,7 +151,8 @@ impl Downloader {
                 let mut url = url.clone();
                 if url.scheme() != "git" {
                     let real_scheme = &orig.scheme()[4..];
-                    url.set_scheme(real_scheme).map_err(|_| NetworkError::UnknownScheme(url.clone()))?;
+                    url.set_scheme(real_scheme)
+                        .map_err(|_| NetworkError::UnknownScheme(url.clone()))?;
                 }
                 self.download_git(progbar, pkg, config, &url, filename)
             }
@@ -143,7 +164,14 @@ impl Downloader {
     //       histories (e.g. glibc) will download very, very slowly
     // XXX: resolving deltas is very slow for some reason.  not sure if it's just libgit2 or due to
     //      the progress bar setup
-    fn download_git(&self, progbar: &ProgressBar, pkg: &BuildFile, config: &Config, url: &Url, filename: &str) -> Result<(), NetworkError> {
+    fn download_git(
+        &self,
+        progbar: &ProgressBar,
+        pkg: &BuildFile,
+        config: &Config,
+        url: &Url,
+        filename: &str,
+    ) -> Result<(), NetworkError> {
         const WAIT_TIME: u32 = 250_000_000;
 
         progbar.set_style(self.git_counting_style());
@@ -204,10 +232,16 @@ impl Downloader {
             if !config.clobber {
                 if let Ok(repo) = Repository::open(&download_path) {
                     // FIXME: avoid allocating
-                    if let Some(name) = repo.head().ok().and_then(|head| if head.is_branch() { head.name().map(|v| v.to_string()) } else { None }) {
-                        let res = repo.find_remote("origin").and_then(|mut remote| {
-                            remote.fetch(&[&name], Some(&mut options), None)
-                        }).map_err(|e| NetworkError::Git(pkg.name().to_string(), e));
+                    if let Some(name) = repo.head().ok().and_then(|head| {
+                        if head.is_branch() {
+                            head.name().map(|v| v.to_string())
+                        } else {
+                            None
+                        }
+                    }) {
+                        let res = repo.find_remote("origin")
+                            .and_then(|mut remote| remote.fetch(&[&name], Some(&mut options), None))
+                            .map_err(|e| NetworkError::Git(pkg.name().to_string(), e));
 
                         return res;
                     }
@@ -225,7 +259,14 @@ impl Downloader {
         Ok(())
     }
 
-    fn download_http(&self, progbar: &ProgressBar, pkg: &BuildFile, config: &Config, url: &Url, filename: &str) -> Result<(), NetworkError> {
+    fn download_http(
+        &self,
+        progbar: &ProgressBar,
+        pkg: &BuildFile,
+        config: &Config,
+        url: &Url,
+        filename: &str,
+    ) -> Result<(), NetworkError> {
         const BUF_SIZE: usize = 128 * 1024;
 
         let filepath = pkg.download_dir(config).join(filename);
@@ -237,16 +278,17 @@ impl Downloader {
                 // get metadata for file so we can 1. get the size of the file for Range and 2. see if
                 // the server has a newer version of the file (which would mean we need to download
                 // from scratch)
-                let metadata = fs::metadata(&filepath).map_err(|e| NetworkError::Metadata(path_to_string(&filepath), e))?;
+                let metadata = fs::metadata(&filepath)
+                    .map_err(|e| NetworkError::Metadata(path_to_string(&filepath), e))?;
 
                 let filelen = metadata.len();
                 if length == filelen {
                     // we (most likely) have the correct file, so we are done
-                    return Ok(())
+                    return Ok(());
                 } else if filelen < length {
                     // TODO: handle error (basically if anything fails here we should just download from
                     //       scratch)
-                    let create_time = metadata.created().or_else(|_| metadata.modified()).unwrap();
+                    //let create_time = metadata.created().or_else(|_| metadata.modified()).unwrap();
                     // subtract 60 seconds to satisfy If-Range's date validator
                     //let range_date = create_time - Duration::from_secs(60 * 60 * 24);
 
@@ -266,7 +308,7 @@ impl Downloader {
             // trash any file that already exists
             open_opts.create(true).truncate(true).write(true);
         }
-        
+
         let mut resp = self.client
             .get(url.as_str())
             .headers(headers)
@@ -275,7 +317,11 @@ impl Downloader {
             .map_err(|e| NetworkError::Reqwest(pkg.name().to_string(), e))?;
 
         // XXX: will range ever be None?
-        if let Some(&ContentRange(ContentRangeSpec::Bytes { range: Some((from, to)), instance_length: _ })) = resp.headers().get::<ContentRange>() {
+        if let Some(&ContentRange(ContentRangeSpec::Bytes {
+            range: Some((from, to)),
+            instance_length: _,
+        })) = resp.headers().get::<ContentRange>()
+        {
             progbar.set_style(self.bar_style());
 
             progbar.set_length(to);
@@ -288,13 +334,16 @@ impl Downloader {
             progbar.set_style(self.spinner_style());
         }
 
-        let file = open_opts.open(&filepath).map_err(|e| NetworkError::TargetFile(path_to_string(&filepath), e))?;
+        let file = open_opts
+            .open(&filepath)
+            .map_err(|e| NetworkError::TargetFile(path_to_string(&filepath), e))?;
 
         let mut writer = BufWriter::new(file);
 
         let mut buffer = [0; BUF_SIZE];
         loop {
-            let n = resp.read(&mut buffer).map_err(|e| NetworkError::Download(url.clone(), e))?;
+            let n = resp.read(&mut buffer)
+                .map_err(|e| NetworkError::Download(url.clone(), e))?;
             if n == 0 {
                 break;
             }
@@ -302,26 +351,26 @@ impl Downloader {
             progbar.inc(n as u64);
             progbar.tick();
 
-            writer.write_all(&buffer[..n]).map_err(|e| NetworkError::Write(path_to_string(&filepath), e))?;
+            writer
+                .write_all(&buffer[..n])
+                .map_err(|e| NetworkError::Write(path_to_string(&filepath), e))?;
         }
 
         Ok(())
     }
 
     fn supports_range(&self, url: &Url) -> Option<u64> {
-        self.client
-            .head(url.as_str())
-            .send()
-            .ok()
-            .and_then(|res| {
-                res.headers().get::<AcceptRanges>()
-                    .map(|h| h.contains(&RangeUnit::Bytes) as u64)
-                    .and(res.headers().get::<ContentLength>().map(|h| h.0))
-            })
+        self.client.head(url.as_str()).send().ok().and_then(|res| {
+            res.headers()
+                .get::<AcceptRanges>()
+                .map(|h| h.contains(&RangeUnit::Bytes) as u64)
+                .and(res.headers().get::<ContentLength>().map(|h| h.0))
+        })
     }
 
     fn bar_style(&self) -> ProgressStyle {
-        ProgressStyle::default_bar().template("{prefix:.bold.dim}: {wide_bar} {bytes}/{total_bytes} {percent}% {eta}")
+        ProgressStyle::default_bar()
+            .template("{prefix:.bold.dim}: {wide_bar} {bytes}/{total_bytes} {percent}% {eta}")
     }
 
     fn spinner_style(&self) -> ProgressStyle {
@@ -329,11 +378,13 @@ impl Downloader {
     }
 
     fn git_object_style(&self) -> ProgressStyle {
-        ProgressStyle::default_bar().template("{prefix:.bold.dim}: {wide_bar} {pos}/{len} objects {percent}%")
+        ProgressStyle::default_bar()
+            .template("{prefix:.bold.dim}: {wide_bar} {pos}/{len} objects {percent}%")
     }
 
     fn git_delta_style(&self) -> ProgressStyle {
-        ProgressStyle::default_bar().template("{prefix:.bold.dim}: {wide_bar} {pos}/{len} deltas {percent}%")
+        ProgressStyle::default_bar()
+            .template("{prefix:.bold.dim}: {wide_bar} {pos}/{len} deltas {percent}%")
     }
 
     fn git_counting_style(&self) -> ProgressStyle {

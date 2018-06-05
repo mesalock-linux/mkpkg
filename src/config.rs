@@ -6,34 +6,23 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
 
-use archive::Archiver;
 use builder::Builder;
 use network::Downloader;
 use package::BuildFile;
 use progress::Progress;
-use util;
 
 pub enum Action<'a> {
     // attempt to download a given package
-    Download {
-        pkgs: OsValues<'a>,
-    },
+    Download { pkgs: OsValues<'a> },
 
     // try to install the package, first building it if it's not already built
-    Install {
-        force: bool,
-        pkgs: OsValues<'a>,
-    },
+    Install { force: bool, pkgs: OsValues<'a> },
 
     // build the package, downloading the source code first if need be
-    Build {
-        pkgs: OsValues<'a>,
-    },
+    Build { pkgs: OsValues<'a> },
 
     // print a short description of a given package
-    Describe {
-        pkgs: OsValues<'a>,
-    },
+    Describe { pkgs: OsValues<'a> },
 }
 
 impl<'a> Action<'a> {
@@ -48,8 +37,6 @@ impl<'a> Action<'a> {
             Install { force, pkgs } => {
                 for pkg in pkgs.clone().into_iter() {
                     let _buildfile = BuildFile::open(config.pkgdir, pkg);
-
-
                 }
             }
             Build { pkgs } => {
@@ -75,7 +62,10 @@ impl<'a> Action<'a> {
             Describe { pkgs } => {
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
 
-                println!("displaying information about {} package(s)", buildfiles.len());
+                println!(
+                    "displaying information about {} package(s)",
+                    buildfiles.len()
+                );
 
                 for buildfile in buildfiles {
                     println!("\n{}", buildfile.info());
@@ -94,14 +84,22 @@ impl<'a> Action<'a> {
         let mut packages: Vec<&OsStr> = pkgs.clone().collect();
         packages.sort();
         packages.dedup();
-        packages.into_iter().map(|pkg| BuildFile::open(config.pkgdir, pkg)).collect()
+        packages
+            .into_iter()
+            .map(|pkg| BuildFile::open(config.pkgdir, pkg))
+            .collect()
     }
 
     fn verify_action(act_name: &str, pkgs: &[BuildFile]) -> Result<bool, Error> {
         let stdout_raw = io::stdout();
         let mut stdout = stdout_raw.lock();
 
-        writeln!(&mut stdout, "Planning to {} the following {} packages", act_name, pkgs.len())?;
+        writeln!(
+            &mut stdout,
+            "Planning to {} the following {} packages",
+            act_name,
+            pkgs.len()
+        )?;
         write!(&mut stdout, "Continue? (y/n) ")?;
 
         let mut line = String::new();

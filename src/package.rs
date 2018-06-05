@@ -1,13 +1,13 @@
 use failure::{Error, ResultExt};
-use serde_yaml;
 use semver::Version;
-use url::Url;
-use unicode_xid::UnicodeXID;
+use serde_yaml;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use unicode_xid::UnicodeXID;
+use url::Url;
 
 use super::Config;
 
@@ -29,7 +29,7 @@ struct Package {
     version: Version,
     description: String,
     license: Vec<String>,
-    
+
     // files to download
     source: Vec<Url>,
 
@@ -59,13 +59,20 @@ struct PackageRaw {
 }
 
 impl BuildFile {
-    pub fn open<P: AsRef<Path> + ?Sized, S: AsRef<OsStr> + ?Sized>(pkgdir: &P, pkgname: &S) -> Result<Self, Error> {
+    pub fn open<P: AsRef<Path> + ?Sized, S: AsRef<OsStr> + ?Sized>(
+        pkgdir: &P,
+        pkgname: &S,
+    ) -> Result<Self, Error> {
         let (pkgdir, pkgname) = (pkgdir.as_ref(), pkgname.as_ref());
 
         let build_path = pkgdir.join(pkgname).join("BUILD");
 
         let file = File::open(&build_path).with_context(|err| {
-            format!("could not read build file at '{}': {}", build_path.display(), err)
+            format!(
+                "could not read build file at '{}': {}",
+                build_path.display(),
+                err
+            )
         })?;
 
         let reader = BufReader::new(file);
@@ -105,7 +112,8 @@ impl BuildFile {
                 license: package.license,
 
                 source: {
-                    let source = package.source
+                    let source = package
+                        .source
                         .into_iter()
                         .map(|url| Url::parse(&url))
                         .collect::<Result<_, _>>()?;
@@ -115,7 +123,7 @@ impl BuildFile {
                 prepare: package.prepare,
                 build: package.build,
                 install: package.install,
-            }
+            },
         })
     }
 
@@ -202,11 +210,15 @@ impl Package {
     }
 
     pub fn logdir(&self, config: &Config) -> PathBuf {
-        config.logdir.join(format!("{}-{}", self.name, self.version))
+        config
+            .logdir
+            .join(format!("{}-{}", self.name, self.version))
     }
 
     pub fn builddir(&self, config: &Config) -> PathBuf {
-        config.builddir.join(format!("{}-{}", self.name, self.version))
+        config
+            .builddir
+            .join(format!("{}-{}", self.name, self.version))
     }
 
     pub fn download_dir(&self, config: &Config) -> PathBuf {
@@ -219,13 +231,17 @@ impl Package {
 
     // TODO: colors and which section the package is in (e.g. core or testing)
     pub fn info(&self) -> String {
-        format!("{} {} {:?}\n{}", self.name, self.version, &self.license[..], self.description)
+        format!(
+            "{} {} {:?}\n{}",
+            self.name,
+            self.version,
+            &self.license[..],
+            self.description
+        )
     }
 
     pub fn file_path(url: &Url) -> Result<&str, PackageError> {
-        let url_err = || {
-            PackageError::UnknownFilePath(url.clone())
-        };
+        let url_err = || PackageError::UnknownFilePath(url.clone());
 
         let filename = url.path_segments().ok_or_else(url_err)?.last().unwrap();
         if filename.len() == 0 {

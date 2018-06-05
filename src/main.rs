@@ -6,26 +6,26 @@ extern crate serde_yaml;
 extern crate clap;
 extern crate ansi_term;
 extern crate crossbeam;
+extern crate failure;
 extern crate num_cpus;
 extern crate semver;
 extern crate url;
-extern crate failure;
 #[macro_use]
 extern crate failure_derive;
 extern crate indicatif;
 extern crate tempfile;
-extern crate unicode_xid;
 extern crate term_size;
+extern crate unicode_xid;
 extern crate walkdir;
 
 // downloading source code/patches
-extern crate reqwest;
 extern crate git2;
+extern crate reqwest;
 
 // compression of downloaded files
-extern crate tar;
-extern crate flate2;
 extern crate bzip2;
+extern crate flate2;
+extern crate tar;
 extern crate xz2;
 
 use clap::{Arg, ArgMatches, SubCommand};
@@ -109,9 +109,10 @@ fn main() {
     let builddir = Path::new(matches.value_of_os("builddir").unwrap());
     let logdir = Path::new(matches.value_of_os("logdir").unwrap());
 
-    let licenses = matches.values_of_os("accept")
-            .map(|it| it.map(|v| v.into()).collect())
-            .unwrap_or_else(|| vec![]);
+    let licenses = matches
+        .values_of_os("accept")
+        .map(|it| it.map(|v| v.into()).collect())
+        .unwrap_or_else(|| vec![]);
 
     let config = Config {
         pkgdir: &pkgdir,
@@ -127,7 +128,7 @@ fn main() {
     if config.verbose {
         println!("{}", config);
     }
-    
+
     if let Err(f) = config.action.execute(&config) {
         let _ = util::display_err(format_args!("{}", f));
         process::exit(1);
@@ -136,27 +137,19 @@ fn main() {
 
 fn determine_action<'a>(matches: &'a ArgMatches<'a>) -> Action<'a> {
     match matches.subcommand() {
-        ("install", Some(matches)) => {
-            Action::Install {
-                force: matches.is_present("force"),
-                pkgs: matches.values_of_os("PKG").unwrap(),
-            }
-        }
-        ("build", Some(matches)) => {
-            Action::Build {
-                pkgs: matches.values_of_os("PKG").unwrap(),
-            }
-        }
-        ("download", Some(matches)) => {
-            Action::Download {
-                pkgs: matches.values_of_os("PKG").unwrap(),
-            }
-        }
-        ("describe", Some(matches)) => {
-            Action::Describe {
-                pkgs: matches.values_of_os("PKG").unwrap(),
-            }
-        }
-        _ => unreachable!()
+        ("install", Some(matches)) => Action::Install {
+            force: matches.is_present("force"),
+            pkgs: matches.values_of_os("PKG").unwrap(),
+        },
+        ("build", Some(matches)) => Action::Build {
+            pkgs: matches.values_of_os("PKG").unwrap(),
+        },
+        ("download", Some(matches)) => Action::Download {
+            pkgs: matches.values_of_os("PKG").unwrap(),
+        },
+        ("describe", Some(matches)) => Action::Describe {
+            pkgs: matches.values_of_os("PKG").unwrap(),
+        },
+        _ => unreachable!(),
     }
 }

@@ -1,13 +1,13 @@
+use crossbeam;
+use crossbeam::sync::SegQueue as Queue;
 use failure::{Error, Fail};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use crossbeam::sync::SegQueue as Queue;
-use crossbeam;
 
 use std::fmt;
 use std::fs;
 use std::io;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use config::Config;
 use package::BuildFile;
@@ -27,11 +27,15 @@ pub struct AggregateError {
     pub(crate) errs: Vec<Error>,
 }
 
-impl Fail for AggregateError { }
+impl Fail for AggregateError {}
 
 impl fmt::Display for AggregateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "found the following {} error(s) while downloading packages", self.errs.len())?;
+        writeln!(
+            f,
+            "found the following {} error(s) while downloading packages",
+            self.errs.len()
+        )?;
         for e in &self.errs {
             writeln!(f, "\t{}", e)?;
         }
@@ -39,11 +43,26 @@ impl fmt::Display for AggregateError {
     }
 }
 
-pub trait InitFn: Fn(&ProgressBar, &ProgressBar) + Send + Sync { }
-impl<T> InitFn for T where T: Fn(&ProgressBar, &ProgressBar) + Send + Sync { }
+pub trait InitFn: Fn(&ProgressBar, &ProgressBar) + Send + Sync {}
+impl<T> InitFn for T
+where
+    T: Fn(&ProgressBar, &ProgressBar) + Send + Sync,
+{
+}
 
-pub trait IterFn: Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error> + Send + Sync { }
-impl<T> IterFn for T where T: Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error> + Send + Sync { }
+pub trait IterFn:
+    Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error>
+    + Send
+    + Sync
+{
+}
+impl<T> IterFn for T
+where
+    T: Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error>
+        + Send
+        + Sync,
+{
+}
 
 //pub type InitFn<'a> = &'a (Fn(&ProgressBar, &ProgressBar) + Send + Sync);
 //pub type IterFn<'a> = &'a (Fn(&Config, &BuildFile, &ProgressBar, &ProgressBar, &Fn(Error)) -> Result<(), Error> + Send + Sync);
@@ -63,14 +82,24 @@ impl<'a> Progress<'a> {
         }
     }
 
-    pub fn add_step(&mut self, init: &'a InitFn<Output = ()>, iter: &'a IterFn<Output = Result<(), Error>>) {
+    pub fn add_step(
+        &mut self,
+        init: &'a InitFn<Output = ()>,
+        iter: &'a IterFn<Output = Result<(), Error>>,
+    ) {
         self.init_fns.push(init);
         self.iter_fns.push(iter);
     }
 
-    pub fn run<'b, I: Iterator<Item = &'b BuildFile>>(&self, config: &Config, iter: I) -> Result<(), AggregateError> {
+    pub fn run<'b, I: Iterator<Item = &'b BuildFile>>(
+        &self,
+        config: &Config,
+        iter: I,
+    ) -> Result<(), AggregateError> {
         if let Err(f) = fs::create_dir_all(config.builddir) {
-            return Err(AggregateError { errs: vec![ProgressError::CreateDir(path_to_string(config.builddir), f).into()] });
+            return Err(AggregateError {
+                errs: vec![ProgressError::CreateDir(path_to_string(config.builddir), f).into()],
+            });
         } else if self.iter_fns.len() == 0 {
             return Ok(());
         }
@@ -118,13 +147,17 @@ impl<'a> Progress<'a> {
                             let builddir = buildfile.builddir(config);
                             if !builddir.exists() {
                                 if let Err(f) = fs::create_dir(&builddir) {
-                                    let nerr = ProgressError::CreateDir(path_to_string(&builddir), f).into();
+                                    let nerr =
+                                        ProgressError::CreateDir(path_to_string(&builddir), f)
+                                            .into();
                                     add_error(nerr);
                                     continue;
                                 }
                             }
 
-                            if let Err(f) = iter_fns[current_queue](config, buildfile, &progbar, &total_bar, &add_error) {
+                            if let Err(f) = iter_fns[current_queue](
+                                config, buildfile, &progbar, &total_bar, &add_error,
+                            ) {
                                 add_error(f);
                             } else {
                                 if current_queue + 1 < queues.len() {
@@ -153,7 +186,10 @@ impl<'a> Progress<'a> {
             }
 
             if let Err(f) = multibar.join_and_clear() {
-                errors.lock().unwrap().push(ProgressError::Multibar(f).into());
+                errors
+                    .lock()
+                    .unwrap()
+                    .push(ProgressError::Multibar(f).into());
             }
         });
 
@@ -191,6 +227,7 @@ impl<'a> Progress<'a> {
     }
 
     fn total_style() -> ProgressStyle {
-        ProgressStyle::default_bar().template("{prefix}{wide_bar} {pos}/{len} packages ({msg} errors)")
+        ProgressStyle::default_bar()
+            .template("{prefix}{wide_bar} {pos}/{len} packages ({msg} errors)")
     }
 }
