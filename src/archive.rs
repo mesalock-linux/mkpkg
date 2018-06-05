@@ -2,13 +2,14 @@ use bzip2::bufread::BzDecoder;
 use flate2::bufread::GzDecoder;
 use tar;
 use tempfile;
+use walkdir::Error as WalkError;
 use walkdir::WalkDir;
 use xz2::bufread::{XzDecoder, XzEncoder};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, StripPrefixError};
 
 use config::Config;
 use package::{BuildFile, PackageError};
@@ -22,14 +23,41 @@ pub enum ArchiveError {
     #[fail(display = "could not open '{}': {}", _0, _1)]
     OpenFile(String, #[cause] io::Error),
 
+    #[fail(display = "could not seek to beginning of '{}': {}", _0, _1)]
+    Seek(String, #[cause] io::Error),
+
+    #[fail(display = "could not create file '{}': {}", _0, _1)]
+    CreateFile(String, #[cause] io::Error),
+
     #[fail(display = "could not decompress file: {}", _0)]
     Decompress(#[cause] io::Error),
+
+    #[fail(display = "could not compress file: {}", _0)]
+    Compress(#[cause] io::Error),
 
     #[fail(display = "could not extract contents of '{}': {}", _0, _1)]
     Extract(String, #[cause] io::Error),
 
+    #[fail(display = "could not archive '{}': {}", _0, _1)]
+    Archive(String, #[cause] io::Error),
+
+    #[fail(display = "could not create directory '{}': {}", _0, _1)]
+    CreateDir(String, #[cause] io::Error),
+
     #[fail(display = "could not remove previously extracted files at '{}': {}", _0, _1)]
     RemoveDir(String, #[cause] io::Error),
+
+    #[fail(display = "could not remove intermediate file at '{}': {}", _0, _1)]
+    RemoveFile(String, #[cause] io::Error),
+
+    #[fail(display = "could not copy file from '{}' to '{}': {}", _0, _1, _2)]
+    Copy(String, String, #[cause] io::Error),
+
+    #[fail(display = "found invalid directory entry: {}", _0)]
+    DirEntry(#[cause] WalkError),
+
+    #[fail(display = "found invalid path '{}': {}", _0, _1)]
+    PathPrefix(String, #[cause] StripPrefixError),
 
     #[fail(display = "{}", _0)]
     Package(#[cause] PackageError),
@@ -37,7 +65,6 @@ pub enum ArchiveError {
 
 pub struct Archiver {}
 
-// XXX: when given source with .tar.gz/.tgz files, try to extract them to srcdir
 // XXX: if we try to build in a container, maybe extract to separately writable dirs or something?
 
 trait CompDecoder<R: BufRead>: Sized + Read {
@@ -69,19 +96,16 @@ impl Archiver {
         Self {}
     }
 
-    // TODO: check for errors
     pub fn package(&self, config: &Config, pkg: &BuildFile) -> Result<(), ArchiveError> {
         let tar_path = pkg.builddir(config)
             .join(format!("{}-{}.tar", pkg.name(), pkg.version()));
-        if tar_path.exists() {
-            fs::remove_file(&tar_path).unwrap();
-        }
         let mut tar_file = OpenOptions::new()
             .read(true)
             .write(true)
-            .create_new(true)
+            .create(true)
+            .truncate(true)
             .open(&tar_path)
-            .unwrap();
+            .map_err(|e| ArchiveError::OpenFile(path_to_string(&tar_path), e))?;
 
         {
             let mut builder = tar::Builder::new(BufWriter::new(&mut tar_file));
@@ -89,27 +113,31 @@ impl Archiver {
             // XXX: set header mode?
             // XXX: do we care what type of tar file?  (default is GNU)
 
+            let pkgdir = pkg.builddir(config).join("pkgdir");
             builder
-                .append_dir_all(".", pkg.builddir(config).join("pkgdir"))
-                .unwrap();
-            builder.finish().unwrap();
+                .append_dir_all(".", &pkgdir)
+                .and_then(|_| builder.finish())
+                .map_err(|e| ArchiveError::Archive(path_to_string(&pkgdir), e))?;
         }
 
         // now compress the archive
-        tar_file.seek(SeekFrom::Start(0)).unwrap();
+        tar_file
+            .seek(SeekFrom::Start(0))
+            .map_err(|e| ArchiveError::Seek(path_to_string(&tar_path), e))?;
+
         let package_path =
             pkg.builddir(config)
                 .join(format!("{}-{}.tar.xz", pkg.name(), pkg.version()));
-        if package_path.exists() {
-            fs::remove_file(&package_path).unwrap();
-        }
-        let package_file = File::create(package_path).unwrap();
+        let package_file = File::create(&package_path)
+            .map_err(|e| ArchiveError::CreateFile(path_to_string(&package_path), e))?;
+
         io::copy(
             &mut XzEncoder::new(BufReader::new(tar_file), Self::XZ_LEVEL),
             &mut BufWriter::new(package_file),
-        ).unwrap();
+        ).map_err(|e| ArchiveError::Compress(e))?;
 
-        fs::remove_file(tar_path).unwrap();
+        fs::remove_file(&tar_path)
+            .map_err(|e| ArchiveError::RemoveFile(path_to_string(&tar_path), e))?;
 
         Ok(())
     }
@@ -167,9 +195,7 @@ impl Archiver {
 
                 if !found {
                     // move the file/directory into place even though it wasn't extracted
-                    // TODO: handle error
-                    self.copy_dir(&build_path, &pkg.archive_out_dir(config))
-                        .unwrap();
+                    self.copy_dir(&build_path, &pkg.archive_out_dir(config))?;
                 }
             }
         }
@@ -181,12 +207,12 @@ impl Archiver {
         &self,
         source: &S,
         dest: &D,
-    ) -> io::Result<()> {
+    ) -> Result<(), ArchiveError> {
         let (source, dest) = (source.as_ref(), dest.as_ref());
         if dest.exists() {
-            fs::remove_dir_all(dest)?;
+            fs::remove_dir_all(dest).map_err(|e| ArchiveError::RemoveDir(path_to_string(dest), e))?;
         }
-        fs::create_dir(dest)?;
+        fs::create_dir(dest).map_err(|e| ArchiveError::CreateDir(path_to_string(dest), e))?;
 
         let parent = match source.parent() {
             Some(val) => val,
@@ -195,15 +221,21 @@ impl Archiver {
         };
 
         for entry in WalkDir::new(source) {
-            let entry = entry?;
+            let entry = entry.map_err(|e| ArchiveError::DirEntry(e))?;
 
-            // TODO: handle error
-            let subpath = entry.path().strip_prefix(parent).unwrap();
+            let subpath = entry
+                .path()
+                .strip_prefix(parent)
+                .map_err(|e| ArchiveError::PathPrefix(path_to_string(entry.path()), e))?;
 
+            let path = dest.join(subpath);
             if entry.file_type().is_dir() {
-                fs::create_dir(dest.join(subpath))?;
+                fs::create_dir(&path)
+                    .map_err(|e| ArchiveError::CreateDir(path_to_string(&path), e))?;
             } else {
-                fs::copy(entry.path(), dest.join(subpath))?;
+                fs::copy(entry.path(), &path).map_err(|e| {
+                    ArchiveError::Copy(path_to_string(entry.path()), path_to_string(&path), e)
+                })?;
             }
         }
 
