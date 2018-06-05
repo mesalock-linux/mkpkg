@@ -1,3 +1,4 @@
+use failure::Error;
 use git2::build::RepoBuilder;
 use git2::{self, FetchOptions, RemoteCallbacks, Repository};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -11,7 +12,7 @@ use std::io::{self, BufWriter, Read, Write};
 use std::time::{Duration, Instant};
 
 use package::{BuildFile, PackageError};
-use progress::{AggregateError, InitFn, IterFn, Progress, ProgressError};
+use progress::{InitFn, IterFn};
 use util::path_to_string;
 
 use super::Config;
@@ -47,15 +48,6 @@ pub enum NetworkError {
 
     #[fail(display = "failed to download '{}': {}", _0, _1)]
     Reqwest(String, #[cause] reqwest::Error),
-
-    #[fail(display = "{}", _0)]
-    Progress(#[cause] ProgressError),
-}
-
-impl From<ProgressError> for NetworkError {
-    fn from(err: ProgressError) -> Self {
-        NetworkError::Progress(err)
-    }
 }
 
 pub(crate) struct Downloader {
@@ -80,14 +72,13 @@ impl Downloader {
             bar.set_style(self.bar_style());
 
             total_bar.set_length(pkgslen as u64);
-            total_bar.tick();
         };
 
         let iter_fn = move |config: &Config,
                             pkg: &BuildFile,
                             progbar: &ProgressBar,
                             _total_bar: &ProgressBar,
-                            add_error: &Fn(::failure::Error)| {
+                            add_error: &Fn(Error)| {
             let inner = || -> Result<(), NetworkError> {
                 let download_dir = pkg.download_dir(config);
                 fs::create_dir_all(&download_dir)
@@ -113,20 +104,6 @@ impl Downloader {
     // TODO: check if download of correct file has already occurred and ensure the downloaded file
     //       is complete/not corrupted (to do so we would need some sort of checksums).  if so, we
     //       can skip that download
-    pub fn download_pkgs(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), AggregateError> {
-        let bar_count = pkgs.len() + 1;
-
-        let (init_fn, iter_fn) = self.download_setup(config, pkgs);
-
-        {
-            let mut progress = Progress::new(bar_count);
-
-            progress.add_step(&*init_fn, &*iter_fn);
-
-            progress.run(config, pkgs.iter())
-        }
-    }
-
     fn download(
         &self,
         progbar: &ProgressBar,
@@ -171,7 +148,6 @@ impl Downloader {
         const WAIT_TIME: u32 = 250_000_000;
 
         progbar.set_style(self.git_counting_style());
-        progbar.tick();
 
         let mut last_check = Instant::now() - Duration::new(0, WAIT_TIME);
         let mut deltas = false;
@@ -247,7 +223,7 @@ impl Downloader {
                 .map_err(|e| NetworkError::RemoveDir(path_to_string(&download_path), e))?;
         }
 
-        let repo = RepoBuilder::new()
+        RepoBuilder::new()
             .fetch_options(options)
             .clone(url.as_str(), &download_path)
             .map_err(|e| NetworkError::Git(pkg.name().to_string(), e))?;
@@ -345,7 +321,6 @@ impl Downloader {
             }
             // XXX: maybe update every 250ms like for the git download?
             progbar.inc(n as u64);
-            progbar.tick();
 
             writer
                 .write_all(&buffer[..n])

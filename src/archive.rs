@@ -203,11 +203,11 @@ impl Archiver {
         Ok(())
     }
 
-    fn copy_dir<S: AsRef<Path> + ?Sized, D: AsRef<Path> + ?Sized>(
-        &self,
-        source: &S,
-        dest: &D,
-    ) -> Result<(), ArchiveError> {
+    fn copy_dir<S, D>(&self, source: &S, dest: &D) -> Result<(), ArchiveError>
+    where
+        S: AsRef<Path> + ?Sized,
+        D: AsRef<Path> + ?Sized,
+    {
         let (source, dest) = (source.as_ref(), dest.as_ref());
         if dest.exists() {
             fs::remove_dir_all(dest).map_err(|e| ArchiveError::RemoveDir(path_to_string(dest), e))?;
@@ -291,10 +291,10 @@ impl Archiver {
         Ok(file)
     }
 
-    fn decompress<T: CompDecoder<BufReader<File>>>(
-        &self,
-        build_path: &Path,
-    ) -> Result<File, ArchiveError> {
+    fn decompress<T>(&self, build_path: &Path) -> Result<File, ArchiveError>
+    where
+        T: CompDecoder<BufReader<File>>,
+    {
         let mut file = tempfile::tempfile().map_err(|e| ArchiveError::TempFile(e))?;
         {
             let mut writer = BufWriter::new(&mut file);

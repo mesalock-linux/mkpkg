@@ -32,7 +32,13 @@ impl<'a> Action<'a> {
         match self {
             Download { pkgs } => {
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
-                self.download(config, &buildfiles)?;
+
+                let downloader = Downloader::new();
+                let (init, iter) = downloader.download_setup(config, &buildfiles);
+
+                Progress::new(&buildfiles)
+                    .add_step(&*init, &*iter)
+                    .run(config, buildfiles.iter())?;
             }
             Install { force, pkgs } => {
                 for pkg in pkgs.clone().into_iter() {
@@ -42,22 +48,16 @@ impl<'a> Action<'a> {
             Build { pkgs } => {
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
 
-                let bar_count = buildfiles.len() + 1;
-
                 let downloader = Downloader::new();
                 let builder = Builder::new();
 
                 let (download_init, download_iter) = downloader.download_setup(config, &buildfiles);
                 let (build_init, build_iter) = builder.build_setup(config, &buildfiles);
 
-                {
-                    let mut progress = Progress::new(bar_count);
-
-                    progress.add_step(&*download_init, &*download_iter);
-                    progress.add_step(&*build_init, &*build_iter);
-
-                    progress.run(config, buildfiles.iter())?;
-                }
+                Progress::new(&buildfiles)
+                    .add_step(&*download_init, &*download_iter)
+                    .add_step(&*build_init, &*build_iter)
+                    .run(config, buildfiles.iter())?;
             }
             Describe { pkgs } => {
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
@@ -74,10 +74,6 @@ impl<'a> Action<'a> {
         }
 
         Ok(())
-    }
-
-    fn download(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), Error> {
-        Ok(Downloader::new().download_pkgs(config, pkgs)?)
     }
 
     fn gather_buildfiles(&self, config: &Config, pkgs: &OsValues) -> Result<Vec<BuildFile>, Error> {

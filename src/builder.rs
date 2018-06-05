@@ -1,3 +1,4 @@
+use failure::Error;
 use indicatif::{ProgressBar, ProgressStyle};
 use term_size;
 
@@ -8,14 +9,11 @@ use std::process::{Command, Stdio};
 use archive::{ArchiveError, Archiver};
 use config::Config;
 use package::BuildFile;
-use progress::{AggregateError, InitFn, IterFn, Progress, ProgressError};
+use progress::{InitFn, IterFn};
 use util::{self, path_to_string};
 
 #[derive(Debug, Fail)]
 pub enum BuildError {
-    #[fail(display = "{}", _0)]
-    Progress(#[cause] ProgressError),
-
     #[fail(display = "{}", _0)]
     Archive(#[cause] ArchiveError),
 
@@ -45,12 +43,6 @@ pub enum BuildError {
 
     #[fail(display = "package '{}' failed on command '{}' with {:?}", _0, _1, _2)]
     Command(String, String, Option<i32>),
-}
-
-impl From<ProgressError> for BuildError {
-    fn from(err: ProgressError) -> Self {
-        BuildError::Progress(err)
-    }
 }
 
 pub struct Builder {}
@@ -87,7 +79,6 @@ impl Builder {
 
             total_bar.set_prefix("Building... ");
             total_bar.set_length(pkgslen as u64);
-            total_bar.tick();
         };
 
         // TODO: make archiver.extract() take a progbar or something (or maybe Archiver::new()?)
@@ -95,7 +86,7 @@ impl Builder {
                             pkg: &BuildFile,
                             progbar: &ProgressBar,
                             _total_bar: &ProgressBar,
-                            _add_error: &Fn(::failure::Error)| {
+                            _add_error: &Fn(Error)| {
             let inner = || -> Result<(), BuildError> {
                 progbar.set_prefix(pkg.name());
 
@@ -148,20 +139,6 @@ impl Builder {
         };
 
         (Box::new(init_fn), Box::new(iter_fn))
-    }
-
-    pub fn build_pkgs(&self, config: &Config, pkgs: &[BuildFile]) -> Result<(), AggregateError> {
-        let bar_count = pkgs.len() + 1;
-
-        let (init_fn, iter_fn) = self.build_setup(config, pkgs);
-
-        {
-            let mut progress = Progress::new(bar_count);
-
-            progress.add_step(&*init_fn, &*iter_fn);
-
-            progress.run(config, pkgs.iter())
-        }
     }
 
     fn run_step(

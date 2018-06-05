@@ -57,17 +57,18 @@ pub struct Progress<'a> {
 }
 
 impl<'a> Progress<'a> {
-    pub fn new(bar_count: usize) -> Self {
+    pub fn new(pkgs: &[BuildFile]) -> Self {
         Self {
-            bar_count: bar_count.min(util::cpu_count()),
+            bar_count: (pkgs.len() + 1).min(util::cpu_count()),
             init_fns: vec![],
             iter_fns: vec![],
         }
     }
 
-    pub fn add_step(&mut self, init: &'a InitFn<'a>, iter: &'a IterFn<'a>) {
+    pub fn add_step(&mut self, init: &'a InitFn<'a>, iter: &'a IterFn<'a>) -> &mut Self {
         self.init_fns.push(init);
         self.iter_fns.push(iter);
+        self
     }
 
     pub fn run<'b, I: Iterator<Item = &'b BuildFile>>(
