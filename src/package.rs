@@ -159,6 +159,10 @@ impl BuildFile {
         self.package.builddir(config)
     }
 
+    pub fn logdir(&self, config: &Config) -> PathBuf {
+        self.package.logdir(config)
+    }
+
     pub fn download_dir(&self, config: &Config) -> PathBuf {
         self.package.download_dir(config)
     }
@@ -167,11 +171,11 @@ impl BuildFile {
         self.package.archive_out_dir(config)
     }
 
-    pub fn stdout_log(&self, config: &Config) -> String {
+    pub fn stdout_log(&self, config: &Config) -> PathBuf {
         self.package.stdout_log(config)
     }
 
-    pub fn stderr_log(&self, config: &Config) -> String {
+    pub fn stderr_log(&self, config: &Config) -> PathBuf {
         self.package.stderr_log(config)
     }
 
@@ -189,14 +193,16 @@ impl BuildFile {
 }
 
 impl Package {
-    // FIXME: both stdout_log and stderr_log should output to a log directory specified in config
-    // FIXME: should return PathBuf when the above is added
-    pub fn stdout_log(&self, _config: &Config) -> String {
-        format!("{}-{}-stdout.log", self.name, self.version)
+    pub fn stdout_log(&self, config: &Config) -> PathBuf {
+        self.logdir(config).join("stdout.log")
     }
 
-    pub fn stderr_log(&self, _config: &Config) -> String {
-        format!("{}-{}-stderr.log", self.name, self.version)
+    pub fn stderr_log(&self, config: &Config) -> PathBuf {
+        self.logdir(config).join("stderr.log")
+    }
+
+    pub fn logdir(&self, config: &Config) -> PathBuf {
+        config.logdir.join(format!("{}-{}", self.name, self.version))
     }
 
     pub fn builddir(&self, config: &Config) -> PathBuf {

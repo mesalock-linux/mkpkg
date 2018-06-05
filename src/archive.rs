@@ -199,6 +199,9 @@ impl Archiver {
             if target_path.exists() {
                 fs::remove_dir_all(&target_path).map_err(|e| ArchiveError::RemoveDir(path_to_string(&target_path), e))?;
             }
+            // XXX: do we care about permissions here?  most likely we only care when we are installing for real
+            archive.set_preserve_permissions(true);
+            archive.set_unpack_xattrs(true);
             archive.unpack(&target_path).map_err(|e| ArchiveError::Extract(path_to_string(&target_path), e))?;
         }
 

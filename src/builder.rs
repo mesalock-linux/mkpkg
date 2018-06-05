@@ -1,5 +1,6 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use rayon;
 use term_size;
 
 use std::borrow::Cow;
@@ -7,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 
-use archive::Archiver;
+use archive::{Archiver, ArchiveError};
 use config::Config;
 use package::BuildFile;
 use progress::{AggregateError, Progress, ProgressError};
@@ -18,6 +19,9 @@ pub enum BuildError {
     #[fail(display = "{}", _0)]
     Progress(#[cause] ProgressError),
 
+    #[fail(display = "{}", _0)]
+    Archive(#[cause] ArchiveError),
+
     #[fail(display = "could not remove directory '{}': {}", _0, _1)]
     RemoveDir(String, #[cause] io::Error),
 
@@ -26,6 +30,9 @@ pub enum BuildError {
 
     #[fail(display = "could not create log file '{}': {}", _0, _1)]
     LogFile(String, #[cause] io::Error),
+
+    #[fail(display = "could not find real path for '{}': {}", _0, _1)]
+    Canonicalize(String, #[cause] io::Error),
 
     #[fail(display = "could not execute command '{}': {}", _0, _1)]
     Spawn(String, #[cause] io::Error),
@@ -87,18 +94,26 @@ impl Builder {
             total_bar.tick();
         });
 
+        // TODO: make archiver.extract() take a progbar or something (or maybe Archiver::new()?)
         progress.on_iter(|pkg: &BuildFile, progbar, _total_bar, _add_error| {
             progbar.set_prefix(pkg.name());
+
+            progbar.set_message("extracting");
+            let archiver = Archiver::new();
+            archiver.extract(config, pkg).map_err(|e| BuildError::Archive(e))?;
 
             let steps = &[pkg.prepare(), pkg.build(), pkg.install()];
 
             // FIXME: verbose mode doesn't work well as it interferes with the progress bar (perhaps
             //        disable the progress bar if verbose mode is enabled?)
             let (stdout, stderr) = if !config.verbose {
-                // TODO: write to correct log directories
+                let logdir = pkg.logdir(config);
+                if !logdir.exists() {
+                    fs::create_dir_all(&logdir).map_err(|e| BuildError::CreateDir(path_to_string(&logdir), e))?;
+                }
                 let (stdout_name, stderr_name) = (pkg.stdout_log(config), pkg.stderr_log(config));
-                let stdout = File::create(&stdout_name).map_err(|e| BuildError::LogFile(stdout_name, e))?;
-                let stderr = File::create(&stderr_name).map_err(|e| BuildError::LogFile(stderr_name, e))?;
+                let stdout = File::create(&stdout_name).map_err(|e| BuildError::LogFile(path_to_string(&stdout_name), e))?;
+                let stderr = File::create(&stderr_name).map_err(|e| BuildError::LogFile(path_to_string(&stderr_name), e))?;
                 (Some(stdout), Some(stderr))
             } else {
                 (None, None)
@@ -108,7 +123,7 @@ impl Builder {
             if pkgdir.exists() {
                 fs::remove_dir_all(&pkgdir).map_err(|e| BuildError::RemoveDir(path_to_string(&pkgdir), e))?;
             }
-            fs::create_dir(pkgdir).map_err(|e| BuildError::CreateDir(path_to_string(&pkgdir), e))?;
+            fs::create_dir(&pkgdir).map_err(|e| BuildError::CreateDir(path_to_string(&pkgdir), e))?;
 
             for &step in steps {
                 self.run_step(progbar, config, pkg, step, stdout.as_ref(), stderr.as_ref())?;
@@ -116,10 +131,7 @@ impl Builder {
 
             // now that everything is built and put in place we need to package up pkgdir
             progbar.set_message("packaging");
-            // TODO: handle error
-            Archiver::new().package(config, pkg).unwrap();
-
-            Ok(())
+            archiver.package(config, pkg).map_err(|e| BuildError::Archive(e))
         });
 
         progress.run(config, pkgs.par_iter())
@@ -145,10 +157,8 @@ impl Builder {
 
                 let (stdout, stderr) = if !config.verbose {
                     // try to clone the file rather than reopening it
-                    // FIXME: rather than failing if the clone fails, this should first probably
-                    //        try to open the file again and fail if the open fails
-                    let out = Some(stdout.unwrap().try_clone().map_err(|e| BuildError::LogFile(stdout_name.clone().unwrap(), e))?);
-                    let err = Some(stderr.unwrap().try_clone().map_err(|e| BuildError::LogFile(stderr_name.clone().unwrap(), e))?);
+                    let out = Some(stdout.unwrap().try_clone().map_err(|e| BuildError::LogFile(path_to_string(stdout_name.as_ref().unwrap()), e))?);
+                    let err = Some(stderr.unwrap().try_clone().map_err(|e| BuildError::LogFile(path_to_string(stderr_name.as_ref().unwrap()), e))?);
                     (out, err)
                 } else {
                     (None, None)
@@ -166,6 +176,7 @@ impl Builder {
     //       dependencies in the build file
     fn run_command(&self, config: &Config, pkg: &BuildFile, cmd: &str, stdout: Option<File>, stderr: Option<File>) -> Result<(), BuildError> {
         let mut sh = Command::new("/bin/sh");
+        // TODO: verbose mode should probably act like `tee` and write to both stdout/stderr and the logs
         if let Some(stdout) = stdout {
             sh.stdout(stdout);
         }
@@ -173,13 +184,17 @@ impl Builder {
             sh.stderr(stderr);
         }
 
+        // TODO: load user-specified default env vars from a file
+        //       should replace the below
+        sh.env("MAKEFLAGS", format!("-j{}", rayon::current_num_threads()));
+
         if let Some(env) = pkg.env() {
             sh.envs(env);
         }
         // FIXME: it should be like below but can't be as we use pkgdir elsewhere
         //sh.env("pkgdir", config.pkgdir());
-        // FIXME: check error
-        sh.env("pkgdir", pkg.builddir(config).join("pkgdir").canonicalize().unwrap());
+        let pkgdir = pkg.builddir(config).join("pkgdir");
+        sh.env("pkgdir", pkgdir.canonicalize().map_err(|e| BuildError::Canonicalize(path_to_string(&pkgdir), e))?);
         let mut child = sh
             .current_dir(pkg.archive_out_dir(config))
             .stdin(Stdio::piped())

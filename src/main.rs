@@ -55,6 +55,11 @@ fn main() {
                             .takes_value(true)
                             .default_value_os(OsStr::new("build"))
                             .help("Set the directory in which to download and build packages"))
+                    .arg(Arg::with_name("logdir")
+                            .long("logdir")
+                            .takes_value(true)
+                            .default_value_os(OsStr::new("logs"))
+                            .help("Set the directory in which build logs will be stored"))
                     .arg(Arg::with_name("accept")
                             .long("accept")
                             .takes_value(true)
@@ -101,6 +106,7 @@ fn main() {
 
     let pkgdir = Path::new(matches.value_of_os("pkgdir").unwrap());
     let builddir = Path::new(matches.value_of_os("builddir").unwrap());
+    let logdir = Path::new(matches.value_of_os("logdir").unwrap());
 
     let licenses = matches.values_of_os("accept")
             .map(|it| it.map(|v| v.into()).collect())
@@ -109,6 +115,7 @@ fn main() {
     let config = Config {
         pkgdir: &pkgdir,
         builddir: &builddir,
+        logdir: &logdir,
         licenses: licenses,
         verbose: matches.is_present("verbose"),
         clobber: matches.is_present("clobber"),

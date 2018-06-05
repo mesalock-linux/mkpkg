@@ -1,7 +1,7 @@
 use clap::OsValues;
 use failure::Error;
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, Write};
 use std::path::Path;
@@ -55,12 +55,6 @@ impl<'a> Action<'a> {
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
                 self.download(config, &buildfiles)?;
 
-                for pkg in pkgs.clone().into_iter() {
-                    let buildfile = BuildFile::open(config.pkgdir, pkg)?;
-
-                    Archiver::new().extract(config, &buildfile)?;
-                }
-
                 Builder::new().build_pkgs(config, &buildfiles)?;
             }
             Describe { pkgs } => {
@@ -82,11 +76,10 @@ impl<'a> Action<'a> {
     }
 
     fn gather_buildfiles(&self, config: &Config, pkgs: &OsValues) -> Result<Vec<BuildFile>, Error> {
-        let mut packages = vec![];
-        for pkg in pkgs.clone().into_iter() {
-            packages.push(BuildFile::open(config.pkgdir, pkg)?);
-        }
-        Ok(packages)
+        let mut packages: Vec<&OsStr> = pkgs.clone().collect();
+        packages.sort();
+        packages.dedup();
+        packages.into_iter().map(|pkg| BuildFile::open(config.pkgdir, pkg)).collect()
     }
 
     fn verify_action(act_name: &str, pkgs: &[BuildFile]) -> Result<bool, Error> {
@@ -110,6 +103,7 @@ impl<'a> Action<'a> {
 pub struct Config<'a> {
     pub pkgdir: &'a Path,
     pub builddir: &'a Path,
+    pub logdir: &'a Path,
     // FIXME: this should only accept utf-8
     pub licenses: Vec<OsString>,
     pub verbose: bool,

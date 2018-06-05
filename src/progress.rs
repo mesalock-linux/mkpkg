@@ -89,7 +89,7 @@ where
         mem::swap(&mut init_fn, &mut self.init_fn);
         mem::swap(&mut iter_fn, &mut self.iter_fn);
 
-        let (multibar, total_bar, bars) = Self::create_multibar(self.bar_count.max(2));
+        let (multibar, total_bar, bars) = Self::create_multibar(config, self.bar_count.max(2));
 
         if let Some(init_fn) = init_fn {
             init_fn(&total_bar, &bars);
@@ -162,8 +162,12 @@ where
     }
 
     // spawn bar_count progress bars (with one being the total progress bar)
-    fn create_multibar(bar_count: usize) -> (MultiProgress, ProgressBar, Arc<Mutex<VecDeque<ProgressBar>>>) {
+    fn create_multibar(config: &Config, bar_count: usize) -> (MultiProgress, ProgressBar, Arc<Mutex<VecDeque<ProgressBar>>>) {
         let multibar = MultiProgress::new();
+        // XXX: not sure if this is the best way (if we keep it like this, we need to display progress another way though)
+        if config.verbose {
+            multibar.set_draw_target(::indicatif::ProgressDrawTarget::hidden());
+        }
 
         let total_bar = multibar.add(Self::create_total_progbar());
         total_bar.set_message("0");
