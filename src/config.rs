@@ -73,28 +73,33 @@ impl<'a> Action<'a> {
         packages.dedup();
         packages
             .into_iter()
-            .map(|pkg| BuildFile::open(config.pkgdir, pkg))
+            .map(|pkg| BuildFile::open(config.pkgbuild_dir, pkg))
             .collect()
     }
 }
 
+impl<'a> fmt::Debug for Action<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Action::*;
+
+        let action = match *self {
+            Download { .. } => "Download",
+            Build { .. } => "Build",
+            Describe { .. } => "Describe",
+        };
+        write!(f, "{}", action)
+    }
+}
+
+#[derive(Debug)]
 pub struct Config<'a> {
-    pub pkgdir: &'a Path,
-    pub builddir: &'a Path,
-    pub logdir: &'a Path,
+    pub pkgbuild_dir: &'a Path,
+    pub build_dir: &'a Path,
+    pub log_dir: &'a Path,
     // FIXME: this should only accept utf-8
     pub licenses: Vec<OsString>,
     pub verbose: bool,
     pub clobber: bool,
     pub fail_fast: bool,
     pub action: Action<'a>,
-}
-
-impl<'a> fmt::Display for Config<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "--- begin mkpkg config ---\npkgdir: {}\naccepted licenses: {:?}\nverbose: {}\n--- end mkpkg config ---",
-                    self.pkgdir.display(),
-                    self.licenses.iter().map(|s| s.to_string_lossy()).collect::<Vec<_>>(),
-                    self.verbose)
-    }
 }

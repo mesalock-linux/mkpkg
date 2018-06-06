@@ -28,7 +28,7 @@ extern crate flate2;
 extern crate tar;
 extern crate xz2;
 
-use clap::{Arg, ArgMatches, SubCommand};
+use clap::{Arg, ArgMatches, AppSettings, SubCommand};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process;
@@ -46,18 +46,19 @@ mod util;
 
 fn main() {
     let matches = app_from_crate!()
-                    .arg(Arg::with_name("pkgdir")
-                            .long("pkgdir")
+                    .setting(AppSettings::SubcommandRequired)
+                    .arg(Arg::with_name("pkgbuild-dir")
+                            .long("pkgbuild-dir")
                             .takes_value(true)
                             .default_value_os(OsStr::new("."))
-                            .help("Set the directory in which to search for packages"))
-                    .arg(Arg::with_name("builddir")
-                            .long("builddir")
+                            .help("Set the directory in which to search for package build files"))
+                    .arg(Arg::with_name("build-dir")
+                            .long("build-dir")
                             .takes_value(true)
                             .default_value_os(OsStr::new("build"))
                             .help("Set the directory in which to download and build packages"))
-                    .arg(Arg::with_name("logdir")
-                            .long("logdir")
+                    .arg(Arg::with_name("log-dir")
+                            .long("log-dir")
                             .takes_value(true)
                             .default_value_os(OsStr::new("logs"))
                             .help("Set the directory in which build logs will be stored"))
@@ -76,17 +77,17 @@ fn main() {
                             .long("fail-fast")
                             .help("Stop as soon as an error occurs"))
                     .subcommand(SubCommand::with_name("download")
-                            .arg(Arg::with_name("PKG")
+                            .arg(Arg::with_name("PKGBUILD")
                                     .index(1)
                                     .required(true)
                                     .multiple(true)))
                     .subcommand(SubCommand::with_name("describe")
-                            .arg(Arg::with_name("PKG")
+                            .arg(Arg::with_name("PKGBUILD")
                                     .index(1)
                                     .required(true)
                                     .multiple(true)))
                     .subcommand(SubCommand::with_name("build")
-                            .arg(Arg::with_name("PKG")
+                            .arg(Arg::with_name("PKGBUILD")
                                     .index(1)
                                     .required(true)
                                     .multiple(true)))
@@ -96,9 +97,9 @@ fn main() {
                     // everything
                     .get_matches();
 
-    let pkgdir = Path::new(matches.value_of_os("pkgdir").unwrap());
-    let builddir = Path::new(matches.value_of_os("builddir").unwrap());
-    let logdir = Path::new(matches.value_of_os("logdir").unwrap());
+    let pkgdir = Path::new(matches.value_of_os("pkgbuild-dir").unwrap());
+    let builddir = Path::new(matches.value_of_os("build-dir").unwrap());
+    let logdir = Path::new(matches.value_of_os("log-dir").unwrap());
 
     let licenses = matches
         .values_of_os("accept")
@@ -106,19 +107,15 @@ fn main() {
         .unwrap_or_else(|| vec![]);
 
     let config = Config {
-        pkgdir: &pkgdir,
-        builddir: &builddir,
-        logdir: &logdir,
+        pkgbuild_dir: &pkgdir,
+        build_dir: &builddir,
+        log_dir: &logdir,
         licenses: licenses,
         verbose: matches.is_present("verbose"),
         clobber: matches.is_present("clobber"),
         fail_fast: matches.is_present("fail-fast"),
         action: determine_action(&matches),
     };
-
-    if config.verbose {
-        println!("{}", config);
-    }
 
     if let Err(f) = config.action.execute(&config) {
         let _ = util::display_err(format_args!("{}", f));
@@ -129,13 +126,13 @@ fn main() {
 fn determine_action<'a>(matches: &'a ArgMatches<'a>) -> Action<'a> {
     match matches.subcommand() {
         ("build", Some(matches)) => Action::Build {
-            pkgs: matches.values_of_os("PKG").unwrap(),
+            pkgs: matches.values_of_os("PKGBUILD").unwrap(),
         },
         ("download", Some(matches)) => Action::Download {
-            pkgs: matches.values_of_os("PKG").unwrap(),
+            pkgs: matches.values_of_os("PKGBUILD").unwrap(),
         },
         ("describe", Some(matches)) => Action::Describe {
-            pkgs: matches.values_of_os("PKG").unwrap(),
+            pkgs: matches.values_of_os("PKGBUILD").unwrap(),
         },
         _ => unreachable!(),
     }

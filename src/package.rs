@@ -17,7 +17,7 @@ pub enum PackageError {
     UnknownFilePath(Url),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BuildFile {
     env: Option<HashMap<String, String>>,
     package: Package,
@@ -65,7 +65,7 @@ impl BuildFile {
     ) -> Result<Self, Error> {
         let (pkgdir, pkgname) = (pkgdir.as_ref(), pkgname.as_ref());
 
-        let build_path = pkgdir.join(pkgname).join("BUILD");
+        let build_path = pkgdir.join(pkgname);
 
         let file = File::open(&build_path).with_context(|err| {
             format!(
@@ -125,6 +125,13 @@ impl BuildFile {
                 install: package.install,
             },
         })
+    }
+
+    // this is for testing the network code
+    pub(crate) fn with_urls(urls: Vec<Url>) -> Self {
+        let mut buildfile = BuildFile::default();
+        buildfile.package.source = urls;
+        buildfile
     }
 
     pub fn env(&self) -> Option<&HashMap<String, String>> {
@@ -211,14 +218,18 @@ impl Package {
 
     pub fn logdir(&self, config: &Config) -> PathBuf {
         config
-            .logdir
+            .log_dir
             .join(format!("{}-{}", self.name, self.version))
     }
 
     pub fn builddir(&self, config: &Config) -> PathBuf {
         config
-            .builddir
+            .build_dir
             .join(format!("{}-{}", self.name, self.version))
+    }
+
+    pub fn pkgbuild_dir<'a: 'b, 'b>(&self, config: &'a Config) -> &'b Path {
+        config.pkgbuild_dir
     }
 
     pub fn download_dir(&self, config: &Config) -> PathBuf {
@@ -253,6 +264,23 @@ impl Package {
 
     pub fn file_download_path(&self, config: &Config, url: &Url) -> Result<PathBuf, PackageError> {
         Ok(self.download_dir(config).join(Package::file_path(url)?))
+    }
+}
+
+impl Default for Package {
+    fn default() -> Self {
+        Self {
+            name: String::default(),
+            version: Version::new(0, 0, 0),
+            description: String::default(),
+            license: vec![],
+
+            source: vec![],
+
+            prepare: None,
+            build: None,
+            install: None,
+        }
     }
 }
 

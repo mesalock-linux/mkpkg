@@ -76,9 +76,9 @@ impl<'a> Progress<'a> {
         config: &Config,
         iter: I,
     ) -> Result<(), AggregateError> {
-        if let Err(f) = fs::create_dir_all(config.builddir) {
+        if let Err(f) = fs::create_dir_all(config.build_dir) {
             return Err(AggregateError {
-                errs: vec![ProgressError::CreateDir(path_to_string(config.builddir), f).into()],
+                errs: vec![ProgressError::CreateDir(path_to_string(config.build_dir), f).into()],
             });
         } else if self.iter_fns.len() == 0 {
             return Ok(());
