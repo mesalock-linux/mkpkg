@@ -117,74 +117,25 @@ impl<'a> Progress<'a> {
             let errors = &errors;
             // FIXME: this is a stupid way to signal the thread
             let (_tx, rx) = mpsc::channel();
-            s.spawn(move || {
-                loop {
-                    match rx.recv_timeout(Duration::from_millis(250)) {
-                        Ok(()) | Err(RecvTimeoutError::Timeout) => {
-                            for bar in bars {
-                                bar.tick();
-                            }
+            s.spawn(move || loop {
+                match rx.recv_timeout(Duration::from_millis(250)) {
+                    Ok(()) | Err(RecvTimeoutError::Timeout) => {
+                        for bar in bars {
+                            bar.tick();
                         }
-                        _ => break
-                    };
-                }
+                    }
+                    _ => break,
+                };
             });
             for i in 0..self.bar_count - 1 {
                 s.spawn(move || {
-                    let mut current_queue = 0;
-
                     let progbar = &bars[i];
-
-                    init_fns[current_queue](total_bar, progbar);
-
-                    loop {
-                        if let Some(buildfile) = queues[current_queue].try_pop() {
-                            let add_error = |err: Error| {
-                                let mut errors = errors.lock().unwrap();
-                                errors.push(err);
-                                total_bar.set_message(&errors.len().to_string());
-
-                                if config.fail_fast {
-                                    // TODO: figure out a way to exit immediately
-                                }
-                            };
-
-                            let builddir = buildfile.builddir(config);
-                            if !builddir.exists() {
-                                if let Err(f) = fs::create_dir(&builddir) {
-                                    let nerr =
-                                        ProgressError::CreateDir(path_to_string(&builddir), f)
-                                            .into();
-                                    add_error(nerr);
-                                    continue;
-                                }
-                            }
-
-                            if let Err(f) = iter_fns[current_queue](
-                                config, buildfile, progbar, total_bar, &add_error,
-                            ) {
-                                add_error(f);
-                            } else {
-                                if current_queue + 1 < queues.len() {
-                                    queues[current_queue + 1].push(buildfile);
-                                } else {
-                                    // XXX: is it clearer if the total bar increases even on failure?
-                                    total_bar.inc(1);
-                                }
-                            }
-                        } else {
-                            current_queue += 1;
-                            if current_queue == queues.len() {
-                                break;
-                            }
-
-                            init_fns[current_queue](total_bar, progbar);
-                        }
-                    }
+                    self.progress_handler(
+                        config, init_fns, iter_fns, queues, errors, total_bar, progbar,
+                    );
 
                     progbar.finish_with_message("Done");
-                    counter.fetch_sub(1, Ordering::SeqCst);
-                    if counter.load(Ordering::SeqCst) == 0 {
+                    if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
                         total_bar.finish_and_clear();
                     }
                 });
@@ -203,6 +154,64 @@ impl<'a> Progress<'a> {
             Err(AggregateError { errs: errors })
         } else {
             Ok(())
+        }
+    }
+
+    fn progress_handler<'b>(
+        &self,
+        config: &Config,
+        init_fns: &[&'a InitFn<'a>],
+        iter_fns: &[&'a IterFn<'a>],
+        queues: &[Queue<&'b BuildFile>],
+        errors: &Mutex<Vec<Error>>,
+        total_bar: &ProgressBar,
+        progbar: &ProgressBar,
+    ) {
+        let mut current_queue = 0;
+
+        init_fns[current_queue](total_bar, progbar);
+
+        loop {
+            if let Some(buildfile) = queues[current_queue].try_pop() {
+                let add_error = |err: Error| {
+                    let mut errors = errors.lock().unwrap();
+                    errors.push(err);
+                    total_bar.set_message(&errors.len().to_string());
+
+                    if config.fail_fast {
+                        // TODO: figure out a way to exit immediately
+                    }
+                };
+
+                let builddir = buildfile.builddir(config);
+                if !builddir.exists() {
+                    if let Err(f) = fs::create_dir(&builddir) {
+                        let nerr = ProgressError::CreateDir(path_to_string(&builddir), f).into();
+                        add_error(nerr);
+                        continue;
+                    }
+                }
+
+                if let Err(f) =
+                    iter_fns[current_queue](config, buildfile, progbar, total_bar, &add_error)
+                {
+                    add_error(f);
+                } else {
+                    if current_queue + 1 < queues.len() {
+                        queues[current_queue + 1].push(buildfile);
+                    } else {
+                        // XXX: is it clearer if the total bar increases even on failure?
+                        total_bar.inc(1);
+                    }
+                }
+            } else {
+                current_queue += 1;
+                if current_queue == queues.len() {
+                    break;
+                }
+
+                init_fns[current_queue](total_bar, progbar);
+            }
         }
     }
 
