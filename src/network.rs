@@ -26,6 +26,9 @@ pub enum NetworkError {
     #[fail(display = "could not remove directory '{}': {}", _0, _1)]
     RemoveDir(String, #[cause] io::Error),
 
+    #[fail(display = "could not get real path for file '{}': {}", _0, _1)]
+    Canonicalize(String, #[cause] io::Error),
+
     #[fail(display = "could not create file '{}': {}", _0, _1)]
     TargetFile(String, #[cause] io::Error),
 
@@ -37,6 +40,12 @@ pub enum NetworkError {
 
     #[fail(display = "failed to write to '{}': {}", _0, _1)]
     Write(String, #[cause] io::Error),
+
+    #[fail(display = "'{}' is an invalid source file path", _0)]
+    InvalidSource(String),
+
+    #[fail(display = "failed to copy '{}' to '{}': {}", _0, _1, _2)]
+    Copy(String, String, #[cause] io::Error),
 
     #[fail(display = "{}", _0)]
     Package(#[cause] PackageError),
@@ -133,17 +142,25 @@ impl Downloader {
             }
         } else {
             // assuming that the item is just a file
-            // TODO: handle error
-            let filepath = pkg.pkgbuild_dir(config).join(pkg.parent_dir()).join(src_item).canonicalize().unwrap();
+            let pkgbuild_dir = pkg.pkgbuild_dir(config);
+            let pkgbuild_dir = pkgbuild_dir
+                .canonicalize()
+                .map_err(|e| NetworkError::Canonicalize(path_to_string(pkgbuild_dir), e))?;
+
+            let filepath = pkgbuild_dir.join(pkg.parent_dir()).join(src_item);
+            let filepath = filepath
+                .canonicalize()
+                .map_err(|e| NetworkError::Canonicalize(path_to_string(&filepath), e))?;
 
             // ensure that the build file isn't trying to use system files as "sources"
-            if filepath.starts_with(pkg.pkgbuild_dir(config).canonicalize().unwrap()) {
+            if filepath.starts_with(pkgbuild_dir) {
                 // TODO: probably check for config.clobber
-                fs::copy(filepath, pkg.download_dir(config).join(src_item)).unwrap();
-                Ok(())
+                let target_path = pkg.download_dir(config).join(src_item);
+                fs::copy(&filepath, &target_path).map(|_| ()).map_err(|e| {
+                    NetworkError::Copy(path_to_string(&filepath), path_to_string(&target_path), e)
+                })
             } else {
-                // FIXME: error
-                unimplemented!()
+                Err(NetworkError::InvalidSource(path_to_string(&filepath)))
             }
         }
     }

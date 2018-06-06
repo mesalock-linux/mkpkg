@@ -150,7 +150,8 @@ impl Archiver {
             fs::remove_dir_all(&target_path)
                 .map_err(|e| ArchiveError::RemoveDir(path_to_string(&target_path), e))?;
         }
-        fs::create_dir(&target_path).map_err(|e| ArchiveError::CreateDir(path_to_string(&target_path), e))?;
+        fs::create_dir(&target_path)
+            .map_err(|e| ArchiveError::CreateDir(path_to_string(&target_path), e))?;
 
         for src in pkg.source() {
             let build_path = pkg.file_download_path(config, src)

@@ -28,7 +28,7 @@ extern crate flate2;
 extern crate tar;
 extern crate xz2;
 
-use clap::{Arg, ArgMatches, AppSettings, SubCommand};
+use clap::{AppSettings, Arg, ArgMatches, SubCommand};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process;
