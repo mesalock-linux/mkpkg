@@ -90,15 +90,6 @@ fn main() {
                                     .index(1)
                                     .required(true)
                                     .multiple(true)))
-                    .subcommand(SubCommand::with_name("install")
-                            .arg(Arg::with_name("force")
-                                    .long("force")
-                                    .help("Force installation to continue even if doing so would \
-                                           overwrite existing files"))
-                            .arg(Arg::with_name("PKG")
-                                    .index(1)
-                                    .required(true)
-                                    .multiple(true)))
                     // important to note that we require a package argument (unlike the shell
                     // version which just installed all packages), so we need some sort of shell
                     // script to just call mkpkg with all the packages as arguments to build
@@ -137,10 +128,6 @@ fn main() {
 
 fn determine_action<'a>(matches: &'a ArgMatches<'a>) -> Action<'a> {
     match matches.subcommand() {
-        ("install", Some(matches)) => Action::Install {
-            force: matches.is_present("force"),
-            pkgs: matches.values_of_os("PKG").unwrap(),
-        },
         ("build", Some(matches)) => Action::Build {
             pkgs: matches.values_of_os("PKG").unwrap(),
         },

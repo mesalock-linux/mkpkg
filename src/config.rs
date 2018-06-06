@@ -3,7 +3,6 @@ use failure::Error;
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{self, Write};
 use std::path::Path;
 
 use builder::Builder;
@@ -14,9 +13,6 @@ use progress::Progress;
 pub enum Action<'a> {
     // attempt to download a given package
     Download { pkgs: OsValues<'a> },
-
-    // try to install the package, first building it if it's not already built
-    Install { force: bool, pkgs: OsValues<'a> },
 
     // build the package, downloading the source code first if need be
     Build { pkgs: OsValues<'a> },
@@ -39,11 +35,6 @@ impl<'a> Action<'a> {
                 Progress::new(&buildfiles)
                     .add_step(&*init, &*iter)
                     .run(config, buildfiles.iter())?;
-            }
-            Install { force, pkgs } => {
-                for pkg in pkgs.clone().into_iter() {
-                    let _buildfile = BuildFile::open(config.pkgdir, pkg);
-                }
             }
             Build { pkgs } => {
                 let buildfiles = self.gather_buildfiles(config, pkgs)?;
@@ -84,28 +75,6 @@ impl<'a> Action<'a> {
             .into_iter()
             .map(|pkg| BuildFile::open(config.pkgdir, pkg))
             .collect()
-    }
-
-    fn verify_action(act_name: &str, pkgs: &[BuildFile]) -> Result<bool, Error> {
-        let stdout_raw = io::stdout();
-        let mut stdout = stdout_raw.lock();
-
-        writeln!(
-            &mut stdout,
-            "Planning to {} the following {} packages",
-            act_name,
-            pkgs.len()
-        )?;
-        write!(&mut stdout, "Continue? (y/n) ")?;
-
-        let mut line = String::new();
-        io::stdin().read_line(&mut line)?;
-
-        Ok(if line.starts_with("y") || line.starts_with("Y") {
-            true
-        } else {
-            false
-        })
     }
 }
 
