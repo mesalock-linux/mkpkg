@@ -139,7 +139,7 @@ impl BuildFile {
     // returns path to the parent directory of this build file
     pub fn parent_dir(&self) -> &Path {
         // should always have a parent because there will always be at least /
-        self.path.parent().unwrap()
+        self.path().parent().unwrap()
     }
 
     pub fn env(&self) -> Option<&HashMap<String, String>> {

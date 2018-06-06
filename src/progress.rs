@@ -7,7 +7,9 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use config::Config;
 use package::BuildFile;
@@ -85,6 +87,7 @@ impl<'a> Progress<'a> {
         }
 
         let (multibar, total_bar) = Self::create_multibar(config);
+        let total_bar = &total_bar;
 
         let first_queue = Queue::new();
         for buildfile in iter {
@@ -99,18 +102,40 @@ impl<'a> Progress<'a> {
         let init_fns = &self.init_fns[..];
         let iter_fns = &self.iter_fns[..];
 
+        let mut bars = vec![];
+        for _ in 1..self.bar_count {
+            bars.push(multibar.add(Self::create_progbar()));
+        }
+        let bars = &bars[..];
+
         let counter = AtomicUsize::new(self.bar_count.max(2) - 1);
+        let counter = &counter;
 
         // TODO: reduce flickering when building many packages (use multibar.set_move_cursor(true))
         let errors = Mutex::new(vec![]);
         crossbeam::scope(|s| {
-            for _ in 1..self.bar_count {
-                s.spawn(|| {
+            let errors = &errors;
+            // FIXME: this is a stupid way to signal the thread
+            let (_tx, rx) = mpsc::channel();
+            s.spawn(move || {
+                loop {
+                    match rx.recv_timeout(Duration::from_millis(250)) {
+                        Ok(()) | Err(RecvTimeoutError::Timeout) => {
+                            for bar in bars {
+                                bar.tick();
+                            }
+                        }
+                        _ => break
+                    };
+                }
+            });
+            for i in 0..self.bar_count - 1 {
+                s.spawn(move || {
                     let mut current_queue = 0;
 
-                    let progbar = multibar.add(Self::create_progbar());
+                    let progbar = &bars[i];
 
-                    init_fns[current_queue](&total_bar, &progbar);
+                    init_fns[current_queue](total_bar, progbar);
 
                     loop {
                         if let Some(buildfile) = queues[current_queue].try_pop() {
@@ -136,7 +161,7 @@ impl<'a> Progress<'a> {
                             }
 
                             if let Err(f) = iter_fns[current_queue](
-                                config, buildfile, &progbar, &total_bar, &add_error,
+                                config, buildfile, progbar, total_bar, &add_error,
                             ) {
                                 add_error(f);
                             } else {
@@ -153,7 +178,7 @@ impl<'a> Progress<'a> {
                                 break;
                             }
 
-                            init_fns[current_queue](&total_bar, &progbar);
+                            init_fns[current_queue](total_bar, progbar);
                         }
                     }
 

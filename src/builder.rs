@@ -70,13 +70,8 @@ impl Builder {
 
         let init_fn = move |total_bar: &ProgressBar, bar: &ProgressBar| {
             bar.set_style(self.spinner_style());
-            // FIXME: this spawns an extra thread for every progress bar (a fix might be to
-            //        catch SIGCHLD in another thread and set condvars or something for the
-            //        progress bar threads such that they will only stop ticking the progress
-            //        bar when the child they spawned is dead).  we might be able to use
-            //        `wait_timeout` for this.
-            bar.enable_steady_tick(250);
 
+            // FIXME: this gets called every time the build step is run for a package
             total_bar.set_prefix("Building... ");
             total_bar.set_length(pkgslen as u64);
         };

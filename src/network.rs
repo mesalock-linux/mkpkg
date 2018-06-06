@@ -9,7 +9,6 @@ use url::Url;
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use package::{BuildFile, PackageError};
