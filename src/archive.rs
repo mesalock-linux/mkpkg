@@ -142,7 +142,16 @@ impl Archiver {
         Ok(())
     }
 
+    // XXX: maybe should just create all necessary directories up-front (like a
+    //      pkg.init_dirs(config) before calling download, build, etc.)
     pub fn extract(&self, config: &Config, pkg: &BuildFile) -> Result<(), ArchiveError> {
+        let target_path = pkg.archive_out_dir(config);
+        if target_path.exists() {
+            fs::remove_dir_all(&target_path)
+                .map_err(|e| ArchiveError::RemoveDir(path_to_string(&target_path), e))?;
+        }
+        fs::create_dir(&target_path).map_err(|e| ArchiveError::CreateDir(path_to_string(&target_path), e))?;
+
         for src in pkg.source() {
             let build_path = pkg.file_download_path(config, src)
                 .map_err(|e| ArchiveError::Package(e))?;
@@ -209,10 +218,6 @@ impl Archiver {
         D: AsRef<Path> + ?Sized,
     {
         let (source, dest) = (source.as_ref(), dest.as_ref());
-        if dest.exists() {
-            fs::remove_dir_all(dest).map_err(|e| ArchiveError::RemoveDir(path_to_string(dest), e))?;
-        }
-        fs::create_dir(dest).map_err(|e| ArchiveError::CreateDir(path_to_string(dest), e))?;
 
         let parent = match source.parent() {
             Some(val) => val,
@@ -276,10 +281,7 @@ impl Archiver {
             // FIXME: extract to correct path (it might make sense to extract to a directory based on the name of the file
             //        in case two files that were downloaded conflict, but this seems unlikely to occur)
             let target_path = pkg.archive_out_dir(config);
-            if target_path.exists() {
-                fs::remove_dir_all(&target_path)
-                    .map_err(|e| ArchiveError::RemoveDir(path_to_string(&target_path), e))?;
-            }
+
             // XXX: do we care about permissions here?  most likely we only care when we are installing for real
             archive.set_preserve_permissions(true);
             archive.set_unpack_xattrs(true);

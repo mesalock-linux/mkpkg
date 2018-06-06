@@ -19,6 +19,8 @@ pub enum PackageError {
 
 #[derive(Debug, Default)]
 pub struct BuildFile {
+    path: PathBuf,
+
     env: Option<HashMap<String, String>>,
     package: Package,
 }
@@ -31,7 +33,7 @@ struct Package {
     license: Vec<String>,
 
     // files to download
-    source: Vec<Url>,
+    source: Vec<String>,
 
     prepare: Option<Vec<String>>,
     build: Option<Vec<String>>,
@@ -104,6 +106,8 @@ impl BuildFile {
         }
 
         Ok(BuildFile {
+            path: PathBuf::from(pkgname),
+
             env: env,
             package: Package {
                 name: package.name,
@@ -111,14 +115,7 @@ impl BuildFile {
                 description: package.description,
                 license: package.license,
 
-                source: {
-                    let source = package
-                        .source
-                        .into_iter()
-                        .map(|url| Url::parse(&url))
-                        .collect::<Result<_, _>>()?;
-                    source
-                },
+                source: package.source,
 
                 prepare: package.prepare,
                 build: package.build,
@@ -128,10 +125,21 @@ impl BuildFile {
     }
 
     // this is for testing the network code
-    pub(crate) fn with_urls(urls: Vec<Url>) -> Self {
+    pub(crate) fn with_urls(urls: Vec<String>) -> Self {
         let mut buildfile = BuildFile::default();
         buildfile.package.source = urls;
         buildfile
+    }
+
+    // returns path to build file within pkgbuild_dir
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    // returns path to the parent directory of this build file
+    pub fn parent_dir(&self) -> &Path {
+        // should always have a parent because there will always be at least /
+        self.path.parent().unwrap()
     }
 
     pub fn env(&self) -> Option<&HashMap<String, String>> {
@@ -154,7 +162,7 @@ impl BuildFile {
         &self.package.license
     }
 
-    pub fn source(&self) -> &[Url] {
+    pub fn source(&self) -> &[String] {
         &self.package.source
     }
 
@@ -172,6 +180,10 @@ impl BuildFile {
 
     pub fn builddir(&self, config: &Config) -> PathBuf {
         self.package.builddir(config)
+    }
+
+    pub fn pkgbuild_dir<'a: 'b, 'b>(&self, config: &'a Config) -> &'b Path {
+        self.package.pkgbuild_dir(config)
     }
 
     pub fn logdir(&self, config: &Config) -> PathBuf {
@@ -198,12 +210,12 @@ impl BuildFile {
         self.package.info()
     }
 
-    pub fn file_path(url: &Url) -> Result<&str, PackageError> {
-        Package::file_path(url)
+    pub fn file_path(src: &str) -> Result<String, PackageError> {
+        Package::file_path(src)
     }
 
-    pub fn file_download_path(&self, config: &Config, url: &Url) -> Result<PathBuf, PackageError> {
-        self.package.file_download_path(config, url)
+    pub fn file_download_path(&self, config: &Config, src: &str) -> Result<PathBuf, PackageError> {
+        self.package.file_download_path(config, src)
     }
 }
 
@@ -251,19 +263,25 @@ impl Package {
         )
     }
 
-    pub fn file_path(url: &Url) -> Result<&str, PackageError> {
-        let url_err = || PackageError::UnknownFilePath(url.clone());
+    // TODO: probably change sources to use an Either type (so we don't need to parse every time
+    //       this is called)
+    pub fn file_path(src: &str) -> Result<String, PackageError> {
+        if let Ok(url) = Url::parse(src) {
+            let url_err = || PackageError::UnknownFilePath(url.clone());
 
-        let filename = url.path_segments().ok_or_else(url_err)?.last().unwrap();
-        if filename.len() == 0 {
-            Err(url_err())?;
+            let filename = url.path_segments().ok_or_else(url_err)?.last().unwrap();
+            if filename.len() == 0 {
+                Err(url_err())?;
+            }
+
+            Ok(filename.to_string())
+        } else {
+            Ok(src.to_string())
         }
-
-        Ok(filename)
     }
 
-    pub fn file_download_path(&self, config: &Config, url: &Url) -> Result<PathBuf, PackageError> {
-        Ok(self.download_dir(config).join(Package::file_path(url)?))
+    pub fn file_download_path(&self, config: &Config, src: &str) -> Result<PathBuf, PackageError> {
+        Ok(self.download_dir(config).join(Package::file_path(src)?))
     }
 }
 

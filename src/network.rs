@@ -9,6 +9,7 @@ use url::Url;
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use package::{BuildFile, PackageError};
@@ -109,34 +110,48 @@ impl Downloader {
         progbar: &ProgressBar,
         pkg: &BuildFile,
         config: &Config,
-        url: &Url,
+        src_item: &str,
     ) -> Result<(), NetworkError> {
-        let filename = BuildFile::file_path(url).map_err(|e| NetworkError::Package(e))?;
+        if let Ok(mut url) = Url::parse(src_item) {
+            let filename = BuildFile::file_path(src_item).map_err(|e| NetworkError::Package(e))?;
 
-        match url.scheme() {
-            "http" | "https" => {
-                // as we require git URLs to be prefixed with "git+", this should be fine
-                self.download_http(progbar, pkg, config, url, filename)
-            }
-            "git+http" | "git+https" | "git" | "git+ssh" => {
-                // can only be git (if it's a valid source URL)
-                let orig = url;
-                let mut url = url.clone();
-                if url.scheme() != "git" {
-                    let real_scheme = &orig.scheme()[4..];
-                    url.set_scheme(real_scheme)
-                        .map_err(|_| NetworkError::UnknownScheme(url.clone()))?;
+            match url.scheme() {
+                "http" | "https" => {
+                    // as we require git URLs to be prefixed with "git+", this should be fine
+                    self.download_http(progbar, pkg, config, &url, &filename)
                 }
-                self.download_git(progbar, pkg, config, &url, filename)
+                "git+http" | "git+https" | "git" | "git+ssh" => {
+                    // can only be git (if it's a valid source URL)
+                    if url.scheme() != "git" {
+                        let real_scheme = url.scheme()[4..].to_owned();
+                        url.set_scheme(&real_scheme)
+                            .map_err(|_| NetworkError::UnknownScheme(url.clone()))?;
+                    }
+                    self.download_git(progbar, pkg, config, &url, &filename)
+                }
+                _ => Err(NetworkError::UnknownScheme(url.clone())),
             }
-            _ => Err(NetworkError::UnknownScheme(url.clone())),
+        } else {
+            // assuming that the item is just a file
+            // TODO: handle error
+            let filepath = pkg.pkgbuild_dir(config).join(pkg.parent_dir()).join(src_item).canonicalize().unwrap();
+
+            // ensure that the build file isn't trying to use system files as "sources"
+            if filepath.starts_with(pkg.pkgbuild_dir(config).canonicalize().unwrap()) {
+                // TODO: probably check for config.clobber
+                fs::copy(filepath, pkg.download_dir(config).join(src_item)).unwrap();
+                Ok(())
+            } else {
+                // FIXME: error
+                unimplemented!()
+            }
         }
     }
 
     // NOTE: unfortunately, libgit2 does not seem to support shallow clones, so projects with huge
     //       histories (e.g. glibc) will download very, very slowly
     // XXX: resolving deltas is very slow for some reason.  not sure if it's just libgit2 or due to
-    //      the progress bar setup
+    //      the progress bar setup (it's libgit2)
     fn download_git(
         &self,
         progbar: &ProgressBar,
