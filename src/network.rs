@@ -157,7 +157,7 @@ impl Downloader {
             // ensure that the build file isn't trying to use system files as "sources"
             if filepath.starts_with(pkgbuild_dir) {
                 // TODO: probably check for config.clobber
-                let target_path = pkg.download_dir(config).join(src_item);
+                let target_path = pkg.download_dir(config);
                 util::copy_dir(&filepath, &target_path).map_err(|e| NetworkError::Util(e))
             } else {
                 Err(NetworkError::InvalidSource(path_to_string(&filepath)))
