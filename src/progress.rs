@@ -59,9 +59,17 @@ pub struct Progress<'a> {
 }
 
 impl<'a> Progress<'a> {
-    pub fn new(pkgs: &[BuildFile]) -> Self {
+    pub fn new(config: &Config, pkgs: &[BuildFile]) -> Self {
+        let mut bar_count = (pkgs.len() + 1).min(util::cpu_count());
+        if let Some(dl_num) = config.parallel_download {
+            bar_count = bar_count.min(dl_num as usize + 1);
+        }
+        if let Some(build_num) = config.parallel_build {
+            bar_count = bar_count.min(build_num as usize + 1);
+        }
+
         Self {
-            bar_count: (pkgs.len() + 1).min(util::cpu_count()),
+            bar_count: bar_count.max(2),
             init_fns: vec![],
             iter_fns: vec![],
         }
@@ -141,7 +149,7 @@ impl<'a> Progress<'a> {
                 });
             }
 
-            if let Err(f) = multibar.join_and_clear() {
+            if let Err(f) = multibar.join() {
                 errors
                     .lock()
                     .unwrap()
@@ -157,6 +165,7 @@ impl<'a> Progress<'a> {
         }
     }
 
+    // TODO: allow downloads and builds to have different numbers of threads executing in parallel
     fn progress_handler<'b>(
         &self,
         config: &Config,

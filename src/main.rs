@@ -32,6 +32,7 @@ use clap::{AppSettings, Arg, ArgMatches, SubCommand};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process;
+use std::u32;
 
 use config::{Action, Config};
 
@@ -76,6 +77,18 @@ fn main() {
                     .arg(Arg::with_name("fail-fast")
                             .long("fail-fast")
                             .help("Stop as soon as an error occurs"))
+                    .arg(Arg::with_name("parallel-download")
+                            .long("parallel-download")
+                            .short("pd")
+                            .takes_value(true)
+                            .validator(is_u32)
+                            .help("Set the number of downloads to occur in parallel"))
+                    .arg(Arg::with_name("parallel-build")
+                            .long("parallel-build")
+                            .short("pb")
+                            .takes_value(true)
+                            .validator(is_u32)
+                            .help("Set the number of builds to occur in parallel"))
                     .subcommand(SubCommand::with_name("download")
                             .arg(Arg::with_name("PKGBUILD")
                                     .index(1)
@@ -114,6 +127,8 @@ fn main() {
         verbose: matches.is_present("verbose"),
         clobber: matches.is_present("clobber"),
         fail_fast: matches.is_present("fail-fast"),
+        parallel_download: convert_u32(matches.value_of("parallel-download")),
+        parallel_build: convert_u32(matches.value_of("parallel-build")),
         action: determine_action(&matches),
     };
 
@@ -136,4 +151,12 @@ fn determine_action<'a>(matches: &'a ArgMatches<'a>) -> Action<'a> {
         },
         _ => unreachable!(),
     }
+}
+
+fn is_u32(val: String) -> Result<(), String> {
+    u32::from_str_radix(&val, 10).map(|_| ()).map_err(|e| e.to_string())
+}
+
+fn convert_u32(val: Option<&str>) -> Option<u32> {
+    val.map(|s| u32::from_str_radix(s, 10).unwrap())
 }

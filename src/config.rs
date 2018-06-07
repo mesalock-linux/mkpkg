@@ -32,7 +32,7 @@ impl<'a> Action<'a> {
                 let downloader = Downloader::new();
                 let (init, iter) = downloader.download_setup(config, &buildfiles);
 
-                Progress::new(&buildfiles)
+                Progress::new(config, &buildfiles)
                     .add_step(&*init, &*iter)
                     .run(config, buildfiles.iter())?;
             }
@@ -45,7 +45,7 @@ impl<'a> Action<'a> {
                 let (download_init, download_iter) = downloader.download_setup(config, &buildfiles);
                 let (build_init, build_iter) = builder.build_setup(config, &buildfiles);
 
-                Progress::new(&buildfiles)
+                Progress::new(config, &buildfiles)
                     .add_step(&*download_init, &*download_iter)
                     .add_step(&*build_init, &*build_iter)
                     .run(config, buildfiles.iter())?;
@@ -101,5 +101,7 @@ pub struct Config<'a> {
     pub verbose: bool,
     pub clobber: bool,
     pub fail_fast: bool,
+    pub parallel_build: Option<u32>,
+    pub parallel_download: Option<u32>,
     pub action: Action<'a>,
 }
