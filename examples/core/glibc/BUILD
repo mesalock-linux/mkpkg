@@ -47,4 +47,7 @@ package:
 
   install:
     - make install_root="$pkgdir" install
-    - strip --strip-unneeded "$pkgdir"/usr/lib/{libdl.so.2,libm.so.6,librt.so.1}
+    - |
+      for f in libdl.so.2 libm.so.6 librt.so.1; do
+        strip --strip-unneeded "$pkgdir"/usr/lib/"$f"
+      done
