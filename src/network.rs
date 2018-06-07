@@ -181,14 +181,12 @@ impl Downloader {
     ) -> Result<(), NetworkError> {
         progbar.set_style(self.git_counting_style());
 
-        let mut last_check = Instant::now() - Duration::from_millis(Self::WAIT_TIME_MILLIS);
+        let mut progress_check = Instant::now() - Duration::from_millis(Self::WAIT_TIME_MILLIS);
+        let mut sideband_check = progress_check.clone();
         let mut deltas = false;
         let mut objects = false;
         let progress_cb = |progress: git2::Progress| {
-            // only display progress every 250ms to avoid the slowdown caused by the progress bar's
-            // internal state constantly locking and unlocking
-            let duration = Instant::now().duration_since(last_check);
-            if duration.as_secs() > 0 || duration.subsec_nanos() >= Self::WAIT_TIME_NANOS {
+            self.perform_gradually(&mut progress_check, || {
                 if progress.total_objects() == progress.received_objects() {
                     if !deltas {
                         progbar.set_style(self.git_delta_style());
@@ -206,20 +204,14 @@ impl Downloader {
 
                     progbar.set_position(progress.received_objects() as u64);
                 }
-
-                last_check = Instant::now();
-            }
+            });
             true
         };
 
-        let mut last_check = Instant::now() - Duration::from_millis(Self::WAIT_TIME_MILLIS);
         let sideband_cb = |data: &[u8]| {
-            let duration = Instant::now().duration_since(last_check);
-            if duration.as_secs() > 0 || duration.subsec_nanos() >= Self::WAIT_TIME_NANOS {
+            self.perform_gradually(&mut sideband_check, || {
                 progbar.set_message(String::from_utf8_lossy(data).trim());
-
-                last_check = Instant::now();
-            }
+            });
             true
         };
 
@@ -355,13 +347,10 @@ impl Downloader {
 
             byte_count += n;
 
-            let duration = Instant::now().duration_since(last_check);
-            if duration.as_secs() > 0 || duration.subsec_nanos() >= Self::WAIT_TIME_NANOS {
+            self.perform_gradually(&mut last_check, || {
                 progbar.inc(byte_count as u64);
                 byte_count = 0;
-
-                last_check = Instant::now();
-            }
+            });
 
             writer
                 .write_all(&buffer[..n])
@@ -380,6 +369,20 @@ impl Downloader {
                 .map(|h| h.contains(&RangeUnit::Bytes) as u64)
                 .and(res.headers().get::<ContentLength>().map(|h| h.0))
         })
+    }
+
+    fn perform_gradually<F>(&self, last_check: &mut Instant, mut action: F)
+    where
+        F: FnMut(),
+    {
+        // only display progress every 250ms to avoid the slowdown caused by the progress bar's
+        // internal state constantly locking and unlocking
+        let duration = Instant::now().duration_since(*last_check);
+        if duration.as_secs() > 0 || duration.subsec_nanos() >= Self::WAIT_TIME_NANOS {
+            action();
+
+            *last_check = Instant::now();
+        }
     }
 
     fn bar_style(&self) -> ProgressStyle {
