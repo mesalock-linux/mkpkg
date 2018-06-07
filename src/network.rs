@@ -64,6 +64,9 @@ pub(crate) struct Downloader {
 }
 
 impl Downloader {
+    const WAIT_TIME_MILLIS: u64 = 250;
+    const WAIT_TIME_NANOS: u32 = Self::WAIT_TIME_MILLIS as u32 * 1_000_000;
+
     pub fn new() -> Self {
         Self {
             client: Client::new(),
@@ -176,18 +179,16 @@ impl Downloader {
         url: &Url,
         filename: &str,
     ) -> Result<(), NetworkError> {
-        const WAIT_TIME: u32 = 250_000_000;
-
         progbar.set_style(self.git_counting_style());
 
-        let mut last_check = Instant::now() - Duration::new(0, WAIT_TIME);
+        let mut last_check = Instant::now() - Duration::from_millis(Self::WAIT_TIME_MILLIS);
         let mut deltas = false;
         let mut objects = false;
         let progress_cb = |progress: git2::Progress| {
             // only display progress every 250ms to avoid the slowdown caused by the progress bar's
             // internal state constantly locking and unlocking
             let duration = Instant::now().duration_since(last_check);
-            if duration.as_secs() > 0 || duration.subsec_nanos() >= WAIT_TIME {
+            if duration.as_secs() > 0 || duration.subsec_nanos() >= Self::WAIT_TIME_NANOS {
                 if progress.total_objects() == progress.received_objects() {
                     if !deltas {
                         progbar.set_style(self.git_delta_style());
@@ -211,10 +212,10 @@ impl Downloader {
             true
         };
 
-        let mut last_check = Instant::now() - Duration::new(0, WAIT_TIME);
+        let mut last_check = Instant::now() - Duration::from_millis(Self::WAIT_TIME_MILLIS);
         let sideband_cb = |data: &[u8]| {
             let duration = Instant::now().duration_since(last_check);
-            if duration.as_secs() > 0 || duration.subsec_nanos() >= WAIT_TIME {
+            if duration.as_secs() > 0 || duration.subsec_nanos() >= Self::WAIT_TIME_NANOS {
                 progbar.set_message(String::from_utf8_lossy(data).trim());
 
                 last_check = Instant::now();
@@ -229,15 +230,14 @@ impl Downloader {
         let mut options = FetchOptions::new();
         options.remote_callbacks(callbacks);
 
-        // FIXME: work on this
         let download_path = pkg.download_dir(config).join(filename);
         if download_path.exists() {
             if !config.clobber {
                 if let Ok(repo) = Repository::open(&download_path) {
-                    // FIXME: avoid allocating
-                    if let Some(name) = repo.head().ok().and_then(|head| {
+                    let head = repo.head().ok();
+                    if let Some(name) = head.as_ref().and_then(|head| {
                         if head.is_branch() {
-                            head.name().map(|v| v.to_string())
+                            head.name()
                         } else {
                             None
                         }
@@ -270,7 +270,7 @@ impl Downloader {
         url: &Url,
         filename: &str,
     ) -> Result<(), NetworkError> {
-        const BUF_SIZE: usize = 128 * 1024;
+        const BUF_SIZE: usize = 32 * 1024;
 
         let filepath = pkg.download_dir(config).join(filename);
         let mut open_opts = OpenOptions::new();
@@ -343,6 +343,8 @@ impl Downloader {
 
         let mut writer = BufWriter::new(file);
 
+        let mut last_check = Instant::now() - Duration::from_millis(Self::WAIT_TIME_MILLIS);
+        let mut byte_count = 0;
         let mut buffer = [0; BUF_SIZE];
         loop {
             let n = resp.read(&mut buffer)
@@ -350,13 +352,23 @@ impl Downloader {
             if n == 0 {
                 break;
             }
-            // XXX: maybe update every 250ms like for the git download?
-            progbar.inc(n as u64);
+
+            byte_count += n;
+
+            let duration = Instant::now().duration_since(last_check);
+            if duration.as_secs() > 0 || duration.subsec_nanos() >= Self::WAIT_TIME_NANOS {
+                progbar.inc(byte_count as u64);
+                byte_count = 0;
+
+                last_check = Instant::now();
+            }
 
             writer
                 .write_all(&buffer[..n])
                 .map_err(|e| NetworkError::Write(path_to_string(&filepath), e))?;
         }
+
+        progbar.inc(byte_count as u64);
 
         Ok(())
     }
