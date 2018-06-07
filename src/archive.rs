@@ -2,18 +2,16 @@ use bzip2::bufread::BzDecoder;
 use flate2::bufread::GzDecoder;
 use tar;
 use tempfile;
-use walkdir::Error as WalkError;
-use walkdir::WalkDir;
 use xz2::bufread::{XzDecoder, XzEncoder};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, StripPrefixError};
+use std::path::Path;
 
 use config::Config;
 use package::{BuildFile, PackageError};
-use util::path_to_string;
+use util::{self, UtilError, path_to_string};
 
 #[derive(Debug, Fail)]
 pub enum ArchiveError {
@@ -50,14 +48,8 @@ pub enum ArchiveError {
     #[fail(display = "could not remove intermediate file at '{}': {}", _0, _1)]
     RemoveFile(String, #[cause] io::Error),
 
-    #[fail(display = "could not copy file from '{}' to '{}': {}", _0, _1, _2)]
-    Copy(String, String, #[cause] io::Error),
-
-    #[fail(display = "found invalid directory entry: {}", _0)]
-    DirEntry(#[cause] WalkError),
-
-    #[fail(display = "found invalid path '{}': {}", _0, _1)]
-    PathPrefix(String, #[cause] StripPrefixError),
+    #[fail(display = "{}", _0)]
+    Util(#[cause] UtilError),
 
     #[fail(display = "{}", _0)]
     Package(#[cause] PackageError),
@@ -205,43 +197,8 @@ impl Archiver {
 
                 if !found {
                     // move the file/directory into place even though it wasn't extracted
-                    self.copy_dir(&build_path, &pkg.archive_out_dir(config))?;
+                    util::copy_dir(&build_path, &pkg.archive_out_dir(config)).map_err(|e| ArchiveError::Util(e))?
                 }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn copy_dir<S, D>(&self, source: &S, dest: &D) -> Result<(), ArchiveError>
-    where
-        S: AsRef<Path> + ?Sized,
-        D: AsRef<Path> + ?Sized,
-    {
-        let (source, dest) = (source.as_ref(), dest.as_ref());
-
-        let parent = match source.parent() {
-            Some(val) => val,
-            // FIXME: figure out what this should do (basically this means the source is '/', which i don't think can happen)
-            None => unimplemented!(),
-        };
-
-        for entry in WalkDir::new(source) {
-            let entry = entry.map_err(|e| ArchiveError::DirEntry(e))?;
-
-            let subpath = entry
-                .path()
-                .strip_prefix(parent)
-                .map_err(|e| ArchiveError::PathPrefix(path_to_string(entry.path()), e))?;
-
-            let path = dest.join(subpath);
-            if entry.file_type().is_dir() {
-                fs::create_dir(&path)
-                    .map_err(|e| ArchiveError::CreateDir(path_to_string(&path), e))?;
-            } else {
-                fs::copy(entry.path(), &path).map_err(|e| {
-                    ArchiveError::Copy(path_to_string(entry.path()), path_to_string(&path), e)
-                })?;
             }
         }
 

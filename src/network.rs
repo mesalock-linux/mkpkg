@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use package::{BuildFile, PackageError};
 use progress::{InitFn, IterFn};
-use util::path_to_string;
+use util::{self, UtilError, path_to_string};
 
 use super::Config;
 
@@ -43,8 +43,8 @@ pub enum NetworkError {
     #[fail(display = "'{}' is an invalid source file path", _0)]
     InvalidSource(String),
 
-    #[fail(display = "failed to copy '{}' to '{}': {}", _0, _1, _2)]
-    Copy(String, String, #[cause] io::Error),
+    #[fail(display = "{}", _0)]
+    Util(#[cause] UtilError),
 
     #[fail(display = "{}", _0)]
     Package(#[cause] PackageError),
@@ -158,9 +158,7 @@ impl Downloader {
             if filepath.starts_with(pkgbuild_dir) {
                 // TODO: probably check for config.clobber
                 let target_path = pkg.download_dir(config).join(src_item);
-                fs::copy(&filepath, &target_path).map(|_| ()).map_err(|e| {
-                    NetworkError::Copy(path_to_string(&filepath), path_to_string(&target_path), e)
-                })
+                util::copy_dir(&filepath, &target_path).map_err(|e| NetworkError::Util(e))
             } else {
                 Err(NetworkError::InvalidSource(path_to_string(&filepath)))
             }
