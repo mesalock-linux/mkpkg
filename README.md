@@ -1,6 +1,10 @@
 mkpkg
 =====
 
+[![Build Status](https://ci.mesalock-linux.org/api/badges/mesalock-linux/mkpkg/status.svg?branch=master)](https://ci.mesalock-linux.org/mesalock-linux/mkpkg)
+[![License](https://img.shields.io/badge/license-BSD-blue.svg)](LICENSE)
+[![LoC](https://tokei.rs/b1/github/mesalock-linux/mkpkg)](https://github.com/mesalock-linux/mkpkg)
+
 A parallel package builder for MesaLock Linux (inspired by Arch Linux's
 `makepkg`).
 
