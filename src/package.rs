@@ -186,16 +186,24 @@ impl BuildFile {
         self.package.install.as_ref()
     }
 
-    pub fn builddir(&self, config: &Config) -> PathBuf {
-        self.package.builddir(config)
+    pub fn base_dir(&self, config: &Config) -> PathBuf {
+        self.package.base_dir(config)
+    }
+
+    pub fn build_dir(&self, config: &Config) -> PathBuf {
+        self.package.build_dir(config)
+    }
+
+    pub fn pkg_dir(&self, config: &Config) -> PathBuf {
+        self.package.pkg_dir(config)
     }
 
     pub fn pkgbuild_dir<'a: 'b, 'b>(&self, config: &'a Config) -> &'b Path {
         self.package.pkgbuild_dir(config)
     }
 
-    pub fn logdir(&self, config: &Config) -> PathBuf {
-        self.package.logdir(config)
+    pub fn log_dir(&self, config: &Config) -> PathBuf {
+        self.package.log_dir(config)
     }
 
     pub fn download_dir(&self, config: &Config) -> PathBuf {
@@ -229,23 +237,27 @@ impl BuildFile {
 
 impl Package {
     pub fn stdout_log(&self, config: &Config) -> PathBuf {
-        self.logdir(config).join("stdout.log")
+        self.log_dir(config).join("stdout.log")
     }
 
     pub fn stderr_log(&self, config: &Config) -> PathBuf {
-        self.logdir(config).join("stderr.log")
+        self.log_dir(config).join("stderr.log")
     }
 
-    pub fn logdir(&self, config: &Config) -> PathBuf {
-        config
-            .log_dir
-            .join(format!("{}-{}", self.name, self.version))
+    pub fn base_dir(&self, config: &Config) -> PathBuf {
+        config.build_dir.join(format!("{}-{}", self.name, self.version))
     }
 
-    pub fn builddir(&self, config: &Config) -> PathBuf {
-        config
-            .build_dir
-            .join(format!("{}-{}", self.name, self.version))
+    pub fn log_dir(&self, config: &Config) -> PathBuf {
+        self.base_dir(config).join("log")
+    }
+
+    pub fn build_dir(&self, config: &Config) -> PathBuf {
+        self.base_dir(config).join("build")
+    }
+
+    pub fn pkg_dir(&self, config: &Config) -> PathBuf {
+        self.base_dir(config).join("pkg")
     }
 
     pub fn pkgbuild_dir<'a: 'b, 'b>(&self, config: &'a Config) -> &'b Path {
@@ -253,11 +265,11 @@ impl Package {
     }
 
     pub fn download_dir(&self, config: &Config) -> PathBuf {
-        self.builddir(config).join("download")
+        self.base_dir(config).join("src")
     }
 
     pub fn archive_out_dir(&self, config: &Config) -> PathBuf {
-        self.builddir(config).join("out")
+        self.build_dir(config)
     }
 
     // TODO: colors and which section the package is in (e.g. core or testing)

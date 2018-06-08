@@ -95,7 +95,6 @@ impl<'a> fmt::Debug for Action<'a> {
 pub struct Config<'a> {
     pub pkgbuild_dir: &'a Path,
     pub build_dir: &'a Path,
-    pub log_dir: &'a Path,
     // FIXME: this should only accept utf-8
     pub licenses: Vec<OsString>,
     pub verbose: bool,

@@ -89,7 +89,7 @@ impl Archiver {
     }
 
     pub fn package(&self, config: &Config, pkg: &BuildFile) -> Result<(), ArchiveError> {
-        let tar_path = pkg.builddir(config)
+        let tar_path = pkg.base_dir(config)
             .join(format!("{}-{}.tar", pkg.name(), pkg.version()));
         let mut tar_file = OpenOptions::new()
             .read(true)
@@ -105,7 +105,7 @@ impl Archiver {
             // XXX: set header mode?
             // XXX: do we care what type of tar file?  (default is GNU)
 
-            let pkgdir = pkg.builddir(config).join("pkgdir");
+            let pkgdir = pkg.pkg_dir(config);
             builder
                 .append_dir_all(".", &pkgdir)
                 .and_then(|_| builder.finish())
@@ -118,7 +118,7 @@ impl Archiver {
             .map_err(|e| ArchiveError::Seek(path_to_string(&tar_path), e))?;
 
         let package_path =
-            pkg.builddir(config)
+            pkg.base_dir(config)
                 .join(format!("{}-{}.tar.xz", pkg.name(), pkg.version()));
         let package_file = File::create(&package_path)
             .map_err(|e| ArchiveError::CreateFile(path_to_string(&package_path), e))?;

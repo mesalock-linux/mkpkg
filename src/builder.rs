@@ -101,7 +101,7 @@ impl Builder {
                 // FIXME: verbose mode doesn't work well as it interferes with the progress bar (perhaps
                 //        disable the progress bar if verbose mode is enabled?)
                 let (stdout, stderr) = if !config.verbose {
-                    let logdir = pkg.logdir(config);
+                    let logdir = pkg.log_dir(config);
                     if !logdir.exists() {
                         fs::create_dir_all(&logdir)
                             .map_err(|e| BuildError::CreateDir(path_to_string(&logdir), e))?;
@@ -117,7 +117,7 @@ impl Builder {
                     (None, None)
                 };
 
-                let pkgdir = pkg.builddir(config).join("pkgdir");
+                let pkgdir = pkg.pkg_dir(config);
                 if pkgdir.exists() {
                     fs::remove_dir_all(&pkgdir)
                         .map_err(|e| BuildError::RemoveDir(path_to_string(&pkgdir), e))?;
@@ -229,9 +229,8 @@ impl Builder {
         if let Some(env) = pkg.env() {
             sh.envs(env);
         }
-        // FIXME: it should be like below but can't be as we use pkgdir elsewhere
-        //sh.env("pkgdir", config.pkgdir());
-        let pkgdir = pkg.builddir(config).join("pkgdir");
+
+        let pkgdir = pkg.pkg_dir(config);
         let builddir = pkg.archive_out_dir(config);
         sh.env(
             "pkgdir",

@@ -192,7 +192,7 @@ impl<'a> Progress<'a> {
                     }
                 };
 
-                let builddir = buildfile.builddir(config);
+                let builddir = buildfile.base_dir(config);
                 if !builddir.exists() {
                     if let Err(f) = fs::create_dir(&builddir) {
                         let nerr = ProgressError::CreateDir(path_to_string(&builddir), f).into();
