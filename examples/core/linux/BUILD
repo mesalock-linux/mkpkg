@@ -13,9 +13,9 @@ package:
     - config
 
   prepare:
-    - mkdir -p build
-    - cp config build/.config
-    - make -C "${pkgname}-${pkgver}" O="$(pwd)/build" ARCH="x86_64" silentoldconfig
+    - mkdir -p ${builddir}/build
+    - cp config ${builddir}/build/.config
+    - make -C "${builddir}/${pkgname}-${pkgver}" O="${builddir}/build" ARCH="x86_64" silentoldconfig
 
   build:
     - cd build && make ARCH=x86_64 CC=gcc KBUILD_BUILD_VERSION="${pkgver}-Mesalock" bzImage
