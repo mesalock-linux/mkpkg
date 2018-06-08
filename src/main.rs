@@ -154,7 +154,9 @@ fn determine_action<'a>(matches: &'a ArgMatches<'a>) -> Action<'a> {
 }
 
 fn is_u32(val: String) -> Result<(), String> {
-    u32::from_str_radix(&val, 10).map(|_| ()).map_err(|e| e.to_string())
+    u32::from_str_radix(&val, 10)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn convert_u32(val: Option<&str>) -> Option<u32> {

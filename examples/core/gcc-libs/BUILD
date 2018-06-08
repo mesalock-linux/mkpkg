@@ -7,7 +7,7 @@ package:
 
   source:
     - https://ftp.gnu.org/gnu/gcc/gcc-7.2.0/gcc-7.2.0.tar.xz
-  
+
   prepare:
     - tar -Jxf gcc-7.2.0.tar.xz -C ${builddir}
 

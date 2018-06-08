@@ -11,7 +11,7 @@ use std::path::Path;
 
 use config::Config;
 use package::{BuildFile, PackageError};
-use util::{self, UtilError, path_to_string};
+use util::{self, path_to_string, UtilError};
 
 #[derive(Debug, Fail)]
 pub enum ArchiveError {
@@ -145,6 +145,10 @@ impl Archiver {
         fs::create_dir(&target_path)
             .map_err(|e| ArchiveError::CreateDir(path_to_string(&target_path), e))?;
 
+        if pkg.skip_extract() {
+            return Ok(());
+        }
+
         for src in pkg.source() {
             let build_path = pkg.file_download_path(config, src)
                 .map_err(|e| ArchiveError::Package(e))?;
@@ -197,7 +201,8 @@ impl Archiver {
 
                 if !found {
                     // move the file/directory into place even though it wasn't extracted
-                    util::copy_dir(&build_path, &pkg.archive_out_dir(config)).map_err(|e| ArchiveError::Util(e))?
+                    util::copy_dir(&build_path, &pkg.archive_out_dir(config))
+                        .map_err(|e| ArchiveError::Util(e))?
                 }
             }
         }
@@ -229,7 +234,7 @@ impl Archiver {
     ) -> Result<File, ArchiveError> {
         let mut file = match file {
             Some(file) => file,
-            None => File::open(&build_path)
+            None => File::open(build_path)
                 .map_err(|e| ArchiveError::OpenFile(path_to_string(&build_path), e))?,
         };
         {
@@ -245,7 +250,7 @@ impl Archiver {
             archive.set_unpack_xattrs(true);
             archive
                 .unpack(&target_path)
-                .map_err(|e| ArchiveError::Extract(path_to_string(&target_path), e))?;
+                .map_err(|e| ArchiveError::Extract(path_to_string(build_path), e))?;
         }
 
         Ok(file)

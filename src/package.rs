@@ -1,13 +1,14 @@
 use failure::{Error, ResultExt};
 use semver::Version;
 use serde_yaml;
+use unicode_xid::UnicodeXID;
+use url::Url;
+
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use unicode_xid::UnicodeXID;
-use url::Url;
 
 use super::Config;
 
@@ -34,6 +35,7 @@ struct Package {
 
     // files to download
     source: Vec<String>,
+    skip_extract: Option<bool>,
 
     prepare: Option<Vec<String>>,
     build: Option<Vec<String>>,
@@ -54,6 +56,7 @@ struct PackageRaw {
     license: Vec<String>,
 
     source: Vec<String>,
+    skip_extract: Option<bool>,
 
     prepare: Option<Vec<String>>,
     build: Option<Vec<String>>,
@@ -116,6 +119,7 @@ impl BuildFile {
                 license: package.license,
 
                 source: package.source,
+                skip_extract: package.skip_extract,
 
                 prepare: package.prepare,
                 build: package.build,
@@ -164,6 +168,10 @@ impl BuildFile {
 
     pub fn source(&self) -> &[String] {
         &self.package.source
+    }
+
+    pub fn skip_extract(&self) -> bool {
+        self.package.skip_extract.unwrap_or(false)
     }
 
     pub fn prepare(&self) -> Option<&Vec<String>> {
@@ -294,6 +302,7 @@ impl Default for Package {
             license: vec![],
 
             source: vec![],
+            skip_extract: None,
 
             prepare: None,
             build: None,

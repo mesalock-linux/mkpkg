@@ -1,12 +1,12 @@
 use ansi_term::Color::{Green, Red, Yellow};
 use num_cpus;
-use walkdir::WalkDir;
 use walkdir::Error as WalkError;
+use walkdir::WalkDir;
 
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
-use std::path::{StripPrefixError, Path};
+use std::path::{Path, StripPrefixError};
 
 #[derive(Debug, Fail)]
 pub enum UtilError {
@@ -86,8 +86,7 @@ where
 
         let path = dest.join(subpath);
         if entry.file_type().is_dir() {
-            fs::create_dir(&path)
-                .map_err(|e| UtilError::CreateDir(path_to_string(&path), e))?;
+            fs::create_dir(&path).map_err(|e| UtilError::CreateDir(path_to_string(&path), e))?;
         } else {
             fs::copy(entry.path(), &path).map_err(|e| {
                 UtilError::Copy(path_to_string(entry.path()), path_to_string(&path), e)

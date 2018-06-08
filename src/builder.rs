@@ -4,6 +4,7 @@ use term_size;
 
 use std::fs::{self, File};
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use archive::{ArchiveError, Archiver};
@@ -91,7 +92,11 @@ impl Builder {
                     .extract(config, pkg)
                     .map_err(|e| BuildError::Archive(e))?;
 
-                let steps = &[pkg.prepare(), pkg.build(), pkg.install()];
+                let steps = &[
+                    (pkg.download_dir(config), pkg.prepare()),
+                    (pkg.archive_out_dir(config), pkg.build()),
+                    (pkg.archive_out_dir(config), pkg.install()),
+                ];
 
                 // FIXME: verbose mode doesn't work well as it interferes with the progress bar (perhaps
                 //        disable the progress bar if verbose mode is enabled?)
@@ -120,8 +125,16 @@ impl Builder {
                 fs::create_dir(&pkgdir)
                     .map_err(|e| BuildError::CreateDir(path_to_string(&pkgdir), e))?;
 
-                for &step in steps {
-                    self.run_step(progbar, config, pkg, step, stdout.as_ref(), stderr.as_ref())?;
+                for (cur_dir, step) in steps {
+                    self.run_step(
+                        progbar,
+                        config,
+                        pkg,
+                        &cur_dir,
+                        *step,
+                        stdout.as_ref(),
+                        stderr.as_ref(),
+                    )?;
                 }
 
                 // now that everything is built and put in place we need to package up pkgdir
@@ -141,6 +154,7 @@ impl Builder {
         progbar: &ProgressBar,
         config: &Config,
         pkg: &BuildFile,
+        cur_dir: &Path,
         step: Option<&Vec<String>>,
         stdout: Option<&File>,
         stderr: Option<&File>,
@@ -180,7 +194,7 @@ impl Builder {
                     (None, None)
                 };
 
-                self.run_command(config, pkg, cmd, stdout, stderr)?;
+                self.run_command(config, pkg, cmd, cur_dir, stdout, stderr)?;
             }
         }
 
@@ -195,6 +209,7 @@ impl Builder {
         config: &Config,
         pkg: &BuildFile,
         cmd: &str,
+        cur_dir: &Path,
         stdout: Option<File>,
         stderr: Option<File>,
     ) -> Result<(), BuildError> {
@@ -217,13 +232,20 @@ impl Builder {
         // FIXME: it should be like below but can't be as we use pkgdir elsewhere
         //sh.env("pkgdir", config.pkgdir());
         let pkgdir = pkg.builddir(config).join("pkgdir");
+        let builddir = pkg.archive_out_dir(config);
         sh.env(
             "pkgdir",
             pkgdir
                 .canonicalize()
                 .map_err(|e| BuildError::Canonicalize(path_to_string(&pkgdir), e))?,
         );
-        let mut child = sh.current_dir(pkg.archive_out_dir(config))
+        sh.env(
+            "builddir",
+            builddir
+                .canonicalize()
+                .map_err(|e| BuildError::Canonicalize(path_to_string(&builddir), e))?,
+        );
+        let mut child = sh.current_dir(cur_dir)
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| BuildError::Spawn(cmd.to_string(), e))?;

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use package::{BuildFile, PackageError};
 use progress::{InitFn, IterFn};
-use util::{self, UtilError, path_to_string};
+use util::{self, path_to_string, UtilError};
 
 use super::Config;
 
