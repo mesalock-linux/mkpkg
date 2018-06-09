@@ -225,10 +225,7 @@ impl Builder {
         // TODO: load user-specified default env vars from a file
         //       should replace the below
         sh.env("MAKEFLAGS", format!("-j{}", util::cpu_count()));
-
-        if let Some(env) = pkg.env() {
-            sh.envs(env);
-        }
+        sh.envs(pkg.env());
 
         let pkgdir = pkg.pkg_dir(config);
         let builddir = pkg.archive_out_dir(config);

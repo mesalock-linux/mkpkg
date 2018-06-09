@@ -22,7 +22,7 @@ pub enum PackageError {
 pub struct BuildFile {
     path: PathBuf,
 
-    env: Option<HashMap<String, String>>,
+    env: HashMap<String, String>,
     package: Package,
 }
 
@@ -83,7 +83,7 @@ impl BuildFile {
         let reader = BufReader::new(file);
         let buildfile: BuildFileRaw = serde_yaml::from_reader(reader)?;
 
-        let (env, mut package) = (buildfile.env, buildfile.package);
+        let (mut env, mut package) = (buildfile.env, buildfile.package);
 
         // FIXME: rewrite so that all the variables are substituted at once rather than one at a
         //        time the current way means that if a variable $var=$hi is substituted first, then
@@ -91,8 +91,8 @@ impl BuildFile {
         //        should not depend on each other in the env array to avoid circular references).
         //        of course, if the user ends up triggering this somehow they pretty much asked for
         //        it to happen, but the less footguns the better
-        if let Some(ref env) = env {
-            for (key, val) in env {
+        if let Some(ref mut env) = env {
+            for (key, val) in env.iter() {
                 let key = format!("${}", key);
                 package.name = subst_vars(&package.name, &key, val);
                 package.version = subst_vars(&package.version, &key, val);
@@ -106,6 +106,18 @@ impl BuildFile {
                 // don't need to do anything with prepare/build/install as we just attach the env
                 // vars as environment variables to `sh`
             }
+        }
+
+        let mut env = env.unwrap_or_default();
+
+        env.insert("name".into(), package.name.clone());
+        env.insert("version".into(), package.version.clone());
+        // TODO: support ${var} too
+        package.description = subst_vars(&package.description, "$name", &package.name);
+        package.description = subst_vars(&package.description, "$version", &package.version);
+        for src in &mut package.source {
+            *src = subst_vars(src, "$name", &package.name);
+            *src = subst_vars(src, "$version", &package.version);
         }
 
         Ok(BuildFile {
@@ -146,8 +158,8 @@ impl BuildFile {
         self.path().parent().unwrap()
     }
 
-    pub fn env(&self) -> Option<&HashMap<String, String>> {
-        self.env.as_ref()
+    pub fn env(&self) -> &HashMap<String, String> {
+        &self.env
     }
 
     pub fn name(&self) -> &str {

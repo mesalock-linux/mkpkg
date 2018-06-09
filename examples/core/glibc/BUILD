@@ -1,10 +1,9 @@
 env:
-  pkgname: glibc
   pkgver: 2.26
   pkgpatch: 0
 
 package:
-  name: $pkgname
+  name: glibc
   version: $pkgver.$pkgpatch
   description: Glibc
   license:
@@ -12,7 +11,7 @@ package:
     - LGPL
 
   source:
-    - http://ftp.gnu.org/gnu/$pkgname/$pkgname-$pkgver.tar.xz
+    - http://ftp.gnu.org/gnu/$name/$name-$pkgver.tar.xz
 
   build:
     - |
@@ -20,7 +19,7 @@ package:
       echo "rtlddir=/usr/lib" >> configparms
       echo "sbindir=/usr/bin" >> configparms
       echo "rootsbindir=/usr/bin" >> configparms
-    - $pkgname-$pkgver/configure
+    - $name-$pkgver/configure
           --prefix=/usr
           --libdir=/usr/lib
           --libexecdir=/usr/lib
