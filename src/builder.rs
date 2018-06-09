@@ -232,6 +232,7 @@ impl Builder {
 
         let pkgdir = pkg.pkg_dir(config);
         let builddir = pkg.archive_out_dir(config);
+        let srcdir = pkg.download_dir(config);
         sh.env(
             "pkgdir",
             pkgdir
@@ -243,6 +244,12 @@ impl Builder {
             builddir
                 .canonicalize()
                 .map_err(|e| BuildError::Canonicalize(path_to_string(&builddir), e))?,
+        );
+        sh.env(
+            "srcdir",
+            srcdir
+                .canonicalize()
+                .map_err(|e| BuildError::Canonicalize(path_to_string(&srcdir), e))?,
         );
         let mut child = sh.current_dir(cur_dir)
             .stdin(Stdio::piped())

@@ -13,8 +13,8 @@ package:
     - config
 
   prepare:
-    - mkdir -p ${builddir}/build
-    - cp config ${builddir}/build/.config
+    - mkdir -p "${builddir}"/build
+    - cp config "${builddir}"/build/.config
     - make -C "${builddir}/${pkgname}-${pkgver}" O="${builddir}/build" ARCH="x86_64" silentoldconfig
 
   build:
