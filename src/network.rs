@@ -1,5 +1,5 @@
 use failure::Error;
-use git2::build::RepoBuilder;
+use git2::build::{CheckoutBuilder, RepoBuilder};
 use git2::{self, FetchOptions, RemoteCallbacks, Repository};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::header::{AcceptRanges, ByteRangeSpec, ContentLength, ContentRange, ContentRangeSpec,
@@ -51,6 +51,9 @@ pub enum NetworkError {
 
     #[fail(display = "invalid scheme for the URL '{}'", _0)]
     UnknownScheme(Url),
+
+    #[fail(display = "unknown fragment type for the URL '{}'", _0)]
+    UnknownFragment(Url),
 
     #[fail(display = "failed to download '{}': {}", _0, _1)]
     Git(String, #[cause] git2::Error),
@@ -138,7 +141,7 @@ impl Downloader {
                         url.set_scheme(&real_scheme)
                             .map_err(|_| NetworkError::UnknownScheme(url.clone()))?;
                     }
-                    self.download_git(progbar, pkg, config, &url, &filename)
+                    self.download_git(progbar, pkg, config, &mut url, &filename)
                 }
                 _ => Err(NetworkError::UnknownScheme(url.clone())),
             }
@@ -174,7 +177,7 @@ impl Downloader {
         progbar: &ProgressBar,
         pkg: &BuildFile,
         config: &Config,
-        url: &Url,
+        url: &mut Url,
         filename: &str,
     ) -> Result<(), NetworkError> {
         progbar.set_style(self.git_counting_style());
@@ -220,6 +223,9 @@ impl Downloader {
         let mut options = FetchOptions::new();
         options.remote_callbacks(callbacks);
 
+        let fragment = url.fragment().map(|v| v.to_owned());
+        url.set_fragment(None);
+
         let download_path = pkg.download_dir(config).join(filename);
         if download_path.exists() {
             if !config.clobber {
@@ -232,11 +238,11 @@ impl Downloader {
                             None
                         }
                     }) {
-                        let res = repo.find_remote("origin")
+                        repo.find_remote("origin")
                             .and_then(|mut remote| remote.fetch(&[&name], Some(&mut options), None))
-                            .map_err(|e| NetworkError::Git(pkg.name().to_string(), e));
+                            .map_err(|e| NetworkError::Git(pkg.name().to_string(), e))?;
 
-                        return res;
+                        return self.checkout_fragment(pkg, url, &repo, fragment);
                     }
                 }
             }
@@ -244,10 +250,40 @@ impl Downloader {
                 .map_err(|e| NetworkError::RemoveDir(path_to_string(&download_path), e))?;
         }
 
-        RepoBuilder::new()
+        let repo = RepoBuilder::new()
             .fetch_options(options)
             .clone(url.as_str(), &download_path)
             .map_err(|e| NetworkError::Git(pkg.name().to_string(), e))?;
+
+        self.checkout_fragment(pkg, url, &repo, fragment)
+    }
+
+    fn checkout_fragment(
+        &self,
+        pkg: &BuildFile,
+        url: &Url,
+        repo: &Repository,
+        fragment: Option<String>,
+    ) -> Result<(), NetworkError> {
+        if let Some(fragment) = fragment {
+            let res = if fragment.starts_with("branch=") {
+                // TODO: had issues figuring out how to checkout the branch, so unimplemented for now
+                unimplemented!()
+            } else if fragment.starts_with("tag=") {
+                repo.revparse_single(fragment.trim_left_matches("tag="))
+                    .and_then(|reference| reference.peel_to_tag())
+                    .and_then(|tag| tag.peel())
+                    .and_then(|object| repo.set_head_detached(object.id()))
+            } else if fragment.starts_with("commit=") {
+                repo.revparse_single(fragment.trim_left_matches("commit="))
+                    .and_then(|reference| reference.peel_to_commit())
+                    .and_then(|commit| repo.set_head_detached(commit.id()))
+            } else {
+                Err(NetworkError::UnknownFragment(url.to_owned()))?
+            };
+            res.and_then(|_| repo.checkout_head(Some(&mut CheckoutBuilder::new().force())))
+                .map_err(|e| NetworkError::Git(pkg.name().to_string(), e))?;
+        }
 
         Ok(())
     }
