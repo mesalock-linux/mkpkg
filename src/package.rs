@@ -257,7 +257,9 @@ impl Package {
     }
 
     pub fn base_dir(&self, config: &Config) -> PathBuf {
-        config.build_dir.join(format!("{}-{}", self.name, self.version))
+        config
+            .build_dir
+            .join(format!("{}-{}", self.name, self.version))
     }
 
     pub fn log_dir(&self, config: &Config) -> PathBuf {

@@ -35,9 +35,10 @@ impl fmt::Display for AggregateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(
             f,
-            "found the following {} error(s) while downloading packages",
+            "found the following {} error(s) while working on packages",
             self.errs.len()
         )?;
+        // TODO: this would be a good place to use textwrap
         for e in &self.errs {
             writeln!(f, "\t{}", e)?;
         }

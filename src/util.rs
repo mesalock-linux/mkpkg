@@ -6,6 +6,7 @@ use walkdir::WalkDir;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::fs::symlink;
 use std::path::{Path, StripPrefixError};
 
 #[derive(Debug, Fail)]
@@ -15,6 +16,12 @@ pub enum UtilError {
 
     #[fail(display = "could not copy file from '{}' to '{}': {}", _0, _1, _2)]
     Copy(String, String, #[cause] io::Error),
+
+    #[fail(display = "could not read symlink '{}': {}", _0, _1)]
+    ReadLink(String, #[cause] io::Error),
+
+    #[fail(display = "could not create symlink '{}' pointing to '{}': {}", _0, _1, _2)]
+    CreateSymlink(String, String, #[cause] io::Error),
 
     #[fail(display = "found invalid directory entry: {}", _0)]
     DirEntry(#[cause] WalkError),
@@ -85,11 +92,19 @@ where
             .map_err(|e| UtilError::PathPrefix(path_to_string(entry.path()), e))?;
 
         let path = dest.join(subpath);
-        if entry.file_type().is_dir() {
+        let file_type = entry.file_type();
+        if file_type.is_dir() {
             fs::create_dir(&path).map_err(|e| UtilError::CreateDir(path_to_string(&path), e))?;
-        } else {
+        } else if file_type.is_file() {
             fs::copy(entry.path(), &path).map_err(|e| {
                 UtilError::Copy(path_to_string(entry.path()), path_to_string(&path), e)
+            })?;
+        } else {
+            // let's just assume it's a symlink
+            let target = fs::read_link(entry.path())
+                .map_err(|e| UtilError::ReadLink(path_to_string(entry.path()), e))?;
+            symlink(&target, &path).map_err(|e| {
+                UtilError::CreateSymlink(path_to_string(&path), path_to_string(&target), e)
             })?;
         }
     }
