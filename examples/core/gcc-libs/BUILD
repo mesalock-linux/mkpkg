@@ -4,6 +4,7 @@ package:
   description: fjdklfjad
   license: []
   skip_extract: true
+  skip_check: true
 
   source:
     - https://ftp.gnu.org/gnu/gcc/gcc-7.2.0/gcc-7.2.0.tar.xz

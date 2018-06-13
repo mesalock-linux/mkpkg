@@ -95,6 +95,7 @@ impl Builder {
                 let steps = &[
                     (pkg.download_dir(config), pkg.prepare()),
                     (pkg.archive_out_dir(config), pkg.build()),
+                    (pkg.archive_out_dir(config), pkg.check()),
                     (pkg.archive_out_dir(config), pkg.install()),
                 ];
 

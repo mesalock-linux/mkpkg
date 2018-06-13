@@ -10,6 +10,8 @@
 
    build:
      - cd "$name".git && cargo build --release
+
+   check:
      - cd "$name".git && cargo test
 
    install:

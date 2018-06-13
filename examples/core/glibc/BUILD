@@ -9,6 +9,7 @@ package:
   license:
     - GPL
     - LGPL
+  skip_check: true
 
   source:
     - http://ftp.gnu.org/gnu/$name/$name-$pkgver.tar.xz

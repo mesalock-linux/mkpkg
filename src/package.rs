@@ -16,6 +16,9 @@ use super::Config;
 pub enum PackageError {
     #[fail(display = "could not determine file path from the URL: {}", _0)]
     UnknownFilePath(Url),
+
+    #[fail(display = "the check step is required unless skip_check is true")]
+    NeedsCheck,
 }
 
 #[derive(Debug, Default)]
@@ -36,9 +39,11 @@ struct Package {
     // files to download
     source: Vec<String>,
     skip_extract: Option<bool>,
+    skip_check: Option<bool>,
 
     prepare: Option<Vec<String>>,
     build: Option<Vec<String>>,
+    check: Option<Vec<String>>,
     install: Option<Vec<String>>,
 }
 
@@ -57,9 +62,11 @@ struct PackageRaw {
 
     source: Vec<String>,
     skip_extract: Option<bool>,
+    skip_check: Option<bool>,
 
     prepare: Option<Vec<String>>,
     build: Option<Vec<String>>,
+    check: Option<Vec<String>>,
     install: Option<Vec<String>>,
 }
 
@@ -84,6 +91,11 @@ impl BuildFile {
         let buildfile: BuildFileRaw = serde_yaml::from_reader(reader)?;
 
         let (mut env, mut package) = (buildfile.env, buildfile.package);
+
+        // if check hasn't been given and skip_extract is not present, error out
+        if !package.skip_check.unwrap_or(false) && package.check.is_none() {
+            Err(PackageError::NeedsCheck)?;
+        }
 
         // FIXME: rewrite so that all the variables are substituted at once rather than one at a
         //        time the current way means that if a variable $var=$hi is substituted first, then
@@ -132,9 +144,11 @@ impl BuildFile {
 
                 source: package.source,
                 skip_extract: package.skip_extract,
+                skip_check: package.skip_check,
 
                 prepare: package.prepare,
                 build: package.build,
+                check: package.check,
                 install: package.install,
             },
         })
@@ -186,12 +200,20 @@ impl BuildFile {
         self.package.skip_extract.unwrap_or(false)
     }
 
+    pub fn skip_check(&self) -> bool {
+        self.package.skip_check.unwrap_or(false)
+    }
+
     pub fn prepare(&self) -> Option<&Vec<String>> {
         self.package.prepare.as_ref()
     }
 
     pub fn build(&self) -> Option<&Vec<String>> {
         self.package.build.as_ref()
+    }
+
+    pub fn check(&self) -> Option<&Vec<String>> {
+        self.package.check.as_ref()
     }
 
     pub fn install(&self) -> Option<&Vec<String>> {
@@ -329,9 +351,11 @@ impl Default for Package {
 
             source: vec![],
             skip_extract: None,
+            skip_check: None,
 
             prepare: None,
             build: None,
+            check: None,
             install: None,
         }
     }
