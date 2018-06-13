@@ -267,8 +267,10 @@ impl Downloader {
     ) -> Result<(), NetworkError> {
         if let Some(fragment) = fragment {
             let res = if fragment.starts_with("branch=") {
-                // TODO: had issues figuring out how to checkout the branch, so unimplemented for now
-                unimplemented!()
+                repo.set_head(&format!(
+                    "refs/remotes/origin/{}",
+                    fragment.trim_left_matches("branch=")
+                ))
             } else if fragment.starts_with("tag=") {
                 repo.revparse_single(fragment.trim_left_matches("tag="))
                     .and_then(|reference| reference.peel_to_tag())
