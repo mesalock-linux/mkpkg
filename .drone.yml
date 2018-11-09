@@ -1,14 +1,18 @@
-pipeline:
-  build:
-    image: rust:1.26
-    commands:
-      - apt-get update && apt-get install -y --no-install-recommends cmake
-      - rustup show
-      - cargo build
-      - cargo test
-  build-examples:
-    image: mesalocklinux/build-mesalock-linux
-    commands:
-      - cargo clean && cargo build
-      - ./target/debug/mkpkg build examples/core/glibc/BUILD
-      - ./target/debug/mkpkg build examples/core/linux/BUILD
+kind: pipeline
+name: default
+
+steps:
+- name: build
+  image: rust:1.26
+  commands:
+  - apt-get update && apt-get install -y --no-install-recommends cmake
+  - rustup show
+  - cargo build
+  - cargo test
+
+- name: test-examples
+  image: mesalocklinux/build-mesalock-linux
+  commands:
+  - cargo clean && cargo build
+  - ./target/debug/mkpkg build examples/core/glibc/BUILD
+  - ./target/debug/mkpkg build examples/core/linux/BUILD
