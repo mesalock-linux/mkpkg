@@ -1,5 +1,5 @@
 use crossbeam;
-use crossbeam::sync::SegQueue as Queue;
+use crossbeam::queue::SegQueue as Queue;
 use failure::{Error, Fail};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
