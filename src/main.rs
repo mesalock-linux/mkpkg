@@ -6,6 +6,7 @@ extern crate serde_yaml;
 extern crate clap;
 extern crate ansi_term;
 extern crate crossbeam;
+extern crate crossbeam_utils;
 extern crate failure;
 extern crate num_cpus;
 extern crate semver;

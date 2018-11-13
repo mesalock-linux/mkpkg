@@ -1,4 +1,5 @@
 use crossbeam;
+use crossbeam_utils;
 use crossbeam::queue::SegQueue as Queue;
 use failure::{Error, Fail};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -122,11 +123,11 @@ impl<'a> Progress<'a> {
 
         // TODO: reduce flickering when building many packages (use multibar.set_move_cursor(true))
         let errors = Mutex::new(vec![]);
-        crossbeam::scope(|s| {
+        crossbeam_utils::thread::scope(|s| {
             let errors = &errors;
             // FIXME: this is a stupid way to signal the thread
             let (_tx, rx) = mpsc::channel();
-            s.spawn(move || loop {
+            s.spawn(move |_| loop {
                 match rx.recv_timeout(Duration::from_millis(250)) {
                     Ok(()) | Err(RecvTimeoutError::Timeout) => {
                         for bar in bars {
@@ -137,7 +138,7 @@ impl<'a> Progress<'a> {
                 };
             });
             for i in 0..self.bar_count - 1 {
-                s.spawn(move || {
+                s.spawn(move |_| {
                     let progbar = &bars[i];
                     self.progress_handler(
                         config, init_fns, iter_fns, queues, errors, total_bar, progbar,
@@ -156,7 +157,7 @@ impl<'a> Progress<'a> {
                     .unwrap()
                     .push(ProgressError::Multibar(f).into());
             }
-        });
+        }).unwrap();
 
         let errors = errors.into_inner().unwrap();
         if errors.len() > 0 {
